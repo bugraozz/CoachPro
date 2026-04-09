@@ -1,0 +1,479 @@
+---
+import MainLayout from '../../layouts/MainLayout.astro';
+import { getUserFromRequest, isCoach } from '../../lib/auth';
+import prisma from '../../lib/prisma';
+
+const user = await getUserFromRequest(Astro.request);
+
+if (!user) {
+  return Astro.redirect('/auth/login');
+}
+
+if (!isCoach(user)) {
+  return Astro.redirect('/dashboard');
+}
+
+const { id } = Astro.params;
+
+const student = await prisma.user.findFirst({
+  where: { id, coachId: user.id, role: 'student' },
+  include: {
+    weightHistory: { orderBy: { date: 'desc' }, take: 10 },
+    measurements: { orderBy: { date: 'desc' }, take: 1 },
+    programs: { include: { days: { include: { exercises: true } } }, orderBy: { createdAt: 'desc' } },
+    dietPlans: { include: { meals: { include: { foods: true } } }, orderBy: { createdAt: 'desc' } },
+    bodyAnalyses: { orderBy: { date: 'desc' }, take: 5 },
+    selectedPackage: true,
+    studentTransactions: {
+      orderBy: { createdAt: 'desc' },
+      take: 10,
+      include: {
+        coachPackage: true,
+      },
+    },
+  },
+});
+
+if (!student) {
+  return Astro.redirect('/students');
+}
+
+const bmi = student.currentWeight && student.height 
+  ? (student.currentWeight / ((student.height / 100) ** 2)).toFixed(1) 
+  : null;
+
+// POST işlemleri
+if (Astro.request.method === 'POST') {
+  const formData = await Astro.request.formData();
+  const action = formData.get('action');
+
+  if (action === 'update_weight') {
+    const weight = parseFloat(formData.get('weight') as string);
+    if (weight > 0) {
+      await prisma.weightRecord.create({
+        data: { userId: student.id, weight }
+      });
+      await prisma.user.update({
+        where: { id: student.id },
+        data: { currentWeight: weight }
+      });
+    }
+  }
+
+  if (action === 'update_profile') {
+    const targetWeight = formData.get('targetWeight') ? parseFloat(formData.get('targetWeight') as string) : null;
+    const height = formData.get('height') ? parseFloat(formData.get('height') as string) : null;
+    const age = formData.get('age') ? parseInt(formData.get('age') as string) : null;
+    const healthNotes = formData.get('healthNotes') as string || null;
+    const gender = formData.get('gender') as string || null;
+
+    await prisma.user.update({
+      where: { id: student.id },
+      data: { targetWeight, height, age, healthNotes, gender }
+    });
+  }
+
+  if (action === 'create_program') {
+    const programName = formData.get('programName') as string;
+    if (programName) {
+      await prisma.program.create({
+        data: {
+          userId: student.id,
+          name: programName,
+          startDate: new Date(),
+          status: 'active',
+        }
+      });
+    }
+  }
+
+  if (action === 'create_diet') {
+    const dietName = formData.get('dietName') as string;
+    const calories = parseInt(formData.get('calories') as string) || 2000;
+    const protein = parseInt(formData.get('protein') as string) || 150;
+    const carbs = parseInt(formData.get('carbs') as string) || 200;
+    const fat = parseInt(formData.get('fat') as string) || 70;
+
+    if (dietName) {
+      await prisma.dietPlan.create({
+        data: {
+          userId: student.id,
+          name: dietName,
+          startDate: new Date(),
+          dailyCalorieTarget: calories,
+          proteinTarget: protein,
+          carbsTarget: carbs,
+          fatTarget: fat,
+          active: true,
+        }
+      });
+    }
+  }
+
+  return Astro.redirect(`/students/${id}`);
+}
+---
+
+<MainLayout title={student.name} activePage="students">
+  <header class="px-6 lg:px-8 py-5 border-b border-border-default bg-bg-secondary/80 backdrop-blur-xl sticky top-0 z-50">
+    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+      <div class="flex items-center gap-4">
+        <a href="/students" class="p-2 rounded-lg text-text-secondary hover:text-text-primary hover:bg-bg-tertiary transition-all">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"/></svg>
+        </a>
+        <div>
+          <h1 class="text-2xl font-bold text-text-primary">{student.name}</h1>
+          <p class="text-sm text-text-secondary mt-0.5">Öğrenci Profili</p>
+        </div>
+      </div>
+      <div class="flex items-center gap-2 flex-wrap">
+        <button onclick="document.getElementById('profileModal').classList.remove('hidden')" class="btn-ghost text-xs">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
+          Profili Düzenle
+        </button>
+        <button onclick="document.getElementById('weightModal').classList.remove('hidden')" class="btn-secondary text-xs">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+          Kilo Güncelle
+        </button>
+        <a href={`/students/${student.id}/program/new`} class="btn-primary text-xs">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6.5 6.5 11 11"/><path d="m21 21-1-1"/><path d="m3 3 1 1"/></svg>
+          Program Oluştur
+        </a>
+        <a href={`/students/${student.id}/diet/new`} class="btn-secondary text-xs">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8h1a4 4 0 0 1 0 8h-1"/><path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z"/></svg>
+          Diyet Oluştur
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <div class="p-6 lg:p-8">
+    <!-- Profile Card -->
+    <div class="card mb-8">
+      <div class="flex flex-col lg:flex-row lg:items-center gap-6">
+        <div class="w-20 h-20 lg:w-24 lg:h-24 rounded-2xl bg-gradient-to-br from-accent-primary to-accent-purple flex items-center justify-center text-3xl lg:text-4xl font-bold text-white overflow-hidden shadow-xl shrink-0">
+          {student.name.charAt(0).toUpperCase()}
+        </div>
+        
+        <div class="flex-1 min-w-0">
+          <div class="flex flex-wrap items-center gap-3 mb-3">
+            <h2 class="text-xl lg:text-2xl font-bold text-text-primary">{student.name}</h2>
+            <span class={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold ${student.active ? 'bg-accent-green/15 text-accent-green border border-accent-green/20' : 'bg-accent-red/15 text-accent-red border border-accent-red/20'}`}>
+              <span class={`w-1.5 h-1.5 rounded-full ${student.active ? 'bg-accent-green' : 'bg-accent-red'}`}></span>
+              {student.active ? 'Aktif' : 'Pasif'}
+            </span>
+          </div>
+          <div class="flex flex-wrap items-center gap-2 lg:gap-3">
+            <span class="inline-flex items-center gap-2 px-3 py-1.5 bg-bg-tertiary rounded-lg text-sm text-text-secondary">
+              {student.email}
+            </span>
+            {student.age && (
+              <span class="inline-flex items-center gap-2 px-3 py-1.5 bg-bg-tertiary rounded-lg text-sm text-text-secondary">
+                {student.age} yaş
+              </span>
+            )}
+            {student.height && (
+              <span class="inline-flex items-center gap-2 px-3 py-1.5 bg-bg-tertiary rounded-lg text-sm text-text-secondary">
+                {student.height} cm
+              </span>
+            )}
+            {student.currentWeight && (
+              <span class="inline-flex items-center gap-2 px-3 py-1.5 bg-bg-tertiary rounded-lg text-sm">
+                <span class="font-semibold text-text-primary">{student.currentWeight} kg</span>
+              </span>
+            )}
+            {bmi && (
+              <span class={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm ${parseFloat(bmi) > 25 ? 'bg-accent-orange/10 text-accent-orange' : 'bg-accent-green/10 text-accent-green'}`}>
+                BMI: <span class="font-semibold">{bmi}</span>
+              </span>
+            )}
+            {student.targetWeight && (
+              <span class="inline-flex items-center gap-2 px-3 py-1.5 bg-accent-cyan/10 text-accent-cyan rounded-lg text-sm">
+                Hedef: <span class="font-semibold">{student.targetWeight} kg</span>
+              </span>
+            )}
+            <span class={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm ${student.studentPaymentStatus === 'paid' ? 'bg-accent-green/10 text-accent-green' : 'bg-accent-red/10 text-accent-red'}`}>
+              {student.studentPaymentStatus === 'paid' ? 'Ücret Ödendi' : 'Ödeme Bekleniyor'}
+            </span>
+            <span class="inline-flex items-center gap-2 px-3 py-1.5 bg-bg-tertiary rounded-lg text-sm text-text-secondary">
+              Paket: {student.selectedPackage?.name || 'Seçilmedi'}
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Stats -->
+    <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+      <div class="stat-card">
+        <div class="stat-value">{student.currentWeight || '—'}</div>
+        <div class="stat-label">Mevcut Kilo (kg)</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value">{student.targetWeight || '—'}</div>
+        <div class="stat-label">Hedef Kilo (kg)</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value text-accent-green">{student.programs.filter(p => p.status === 'active').length}</div>
+        <div class="stat-label">Aktif Program</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value text-accent-orange">{student.dietPlans.filter(d => d.active).length}</div>
+        <div class="stat-label">Aktif Diyet</div>
+      </div>
+    </div>
+
+    <div class="card mb-8">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="text-lg font-semibold text-text-primary">Odeme Gecmisi</h3>
+      </div>
+
+      {student.studentTransactions.length > 0 ? (
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="border-b border-border-default/60">
+                <th class="text-left py-2 px-2 text-xs uppercase tracking-wider text-text-muted">Tarih</th>
+                <th class="text-left py-2 px-2 text-xs uppercase tracking-wider text-text-muted">Paket</th>
+                <th class="text-left py-2 px-2 text-xs uppercase tracking-wider text-text-muted">Tutar</th>
+                <th class="text-left py-2 px-2 text-xs uppercase tracking-wider text-text-muted">Durum</th>
+              </tr>
+            </thead>
+            <tbody>
+              {student.studentTransactions.map((transaction) => (
+                <tr class="border-b border-border-default/40">
+                  <td class="py-2 px-2 text-text-secondary">{new Date(transaction.createdAt).toLocaleString('tr-TR')}</td>
+                  <td class="py-2 px-2 text-text-secondary">{transaction.coachPackage?.name || 'Paket Yok'}</td>
+                  <td class="py-2 px-2 font-medium text-text-primary">₺{transaction.amount}</td>
+                  <td class="py-2 px-2">
+                    <span class={`badge ${transaction.status === 'paid' ? 'badge-success' : ''}`} style={transaction.status === 'paid' ? '' : 'background:rgba(239,68,68,0.15);color:var(--color-accent-red);border:1px solid rgba(239,68,68,0.2)'}>
+                      {transaction.status === 'paid' ? 'Basarili' : transaction.status === 'pending' ? 'Bekliyor' : 'Basarisiz'}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div class="text-sm text-text-muted p-4 rounded-xl bg-bg-tertiary/30 border border-border-default">
+          Bu ogrenci icin henuz odeme kaydi yok.
+        </div>
+      )}
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <!-- Programs -->
+      <div class="card">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="text-lg font-semibold text-text-primary flex items-center gap-2">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-accent-green"><path d="m6.5 6.5 11 11"/><path d="m21 21-1-1"/><path d="m3 3 1 1"/></svg>
+            Antrenman Programları
+          </h3>
+          <a href={`/students/${student.id}/program/new`} class="btn-ghost text-xs">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            Yeni
+          </a>
+        </div>
+        
+        {student.programs.length > 0 ? (
+          <div class="space-y-3">
+            {student.programs.map(program => (
+              <div class="p-4 rounded-xl bg-bg-tertiary">
+                <div class="flex items-center justify-between mb-2">
+                  <div class="flex items-center gap-2">
+                    <h4 class="font-semibold text-text-primary">{program.name}</h4>
+                    {program.category && (
+                      <span class="px-2 py-0.5 rounded text-[10px] uppercase font-bold tracking-wider bg-accent-primary/10 text-accent-primary">
+                        {program.category}
+                      </span>
+                    )}
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <a href={`/programs/${program.id}`} class="px-2 py-1 rounded text-xs font-medium bg-neutral-700/50 text-neutral-300 hover:bg-neutral-600/50 transition-colors">
+                      Görüntüle
+                    </a>
+                    <a href={`/students/${student.id}/program/${program.id}/edit`} class="px-2 py-1 rounded text-xs font-medium bg-accent-primary/10 text-accent-primary hover:bg-accent-primary/20 transition-colors">
+                      Düzenle
+                    </a>
+                    <span class={`px-2 py-1 rounded text-xs font-medium ${program.status === 'active' ? 'bg-accent-green/15 text-accent-green' : 'bg-text-muted/15 text-text-muted'}`}>
+                      {program.status === 'active' ? 'Aktif' : 'Pasif'}
+                    </span>
+                  </div>
+                </div>
+                <p class="text-sm text-text-muted mb-2">{program.days.length} gün • {program.days.reduce((sum, d) => sum + d.exercises.length, 0)} egzersiz</p>
+                {program.days.length > 0 && (
+                  <div class="space-y-1">
+                    {program.days.map(day => (
+                      <div class="flex items-center justify-between text-xs py-1.5 px-2 rounded bg-bg-secondary">
+                        <span class="text-text-secondary font-medium">{day.dayName}</span>
+                        <span class="text-text-muted">{day.exercises.length} egzersiz</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div class="text-center py-8 text-text-muted">
+            <p class="mb-3">Henüz program atanmamış</p>
+            <a href={`/students/${student.id}/program/new`} class="btn-primary text-xs">Program Oluştur</a>
+          </div>
+        )}
+      </div>
+
+      <!-- Diet Plans -->
+      <div class="card">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="text-lg font-semibold text-text-primary flex items-center gap-2">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-accent-cyan"><path d="M18 8h1a4 4 0 0 1 0 8h-1"/><path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z"/></svg>
+            Diyet Planları
+          </h3>
+          <a href={`/students/${student.id}/diet/new`} class="btn-ghost text-xs">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            Yeni
+          </a>
+        </div>
+        
+        {student.dietPlans.length > 0 ? (
+          <div class="space-y-3">
+            {student.dietPlans.map(diet => (
+              <div class="p-4 rounded-xl bg-bg-tertiary">
+                <div class="flex items-center justify-between mb-2">
+                  <h4 class="font-semibold text-text-primary">{diet.name}</h4>
+                  <div class="flex items-center gap-2">
+                    <a href={`/students/${student.id}/diet/${diet.id}/edit`} class="px-2 py-1 rounded text-xs font-medium bg-accent-primary/10 text-accent-primary hover:bg-accent-primary/20 transition-colors">
+                      Düzenle
+                    </a>
+                    <span class={`px-2 py-1 rounded text-xs font-medium ${diet.active ? 'bg-accent-green/15 text-accent-green' : 'bg-text-muted/15 text-text-muted'}`}>
+                      {diet.active ? 'Aktif' : 'Pasif'}
+                    </span>
+                  </div>
+                </div>
+                <div class="flex gap-3 text-xs text-text-muted mb-2">
+                  <span>{diet.dailyCalorieTarget} kcal</span>
+                  <span>P: {diet.proteinTarget}g</span>
+                  <span>K: {diet.carbsTarget}g</span>
+                  <span>Y: {diet.fatTarget}g</span>
+                </div>
+                {diet.meals.length > 0 && (
+                  <div class="space-y-1">
+                    {diet.meals.map(meal => (
+                      <div class="flex items-center justify-between text-xs py-1.5 px-2 rounded bg-bg-secondary">
+                        <span class="text-text-secondary font-medium">{meal.name}</span>
+                        <span class="text-text-muted">{meal.foods.length} besin • {meal.foods.reduce((s, f) => s + f.calories, 0)} kcal</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div class="text-center py-8 text-text-muted">
+            <p class="mb-3">Henüz diyet planı atanmamış</p>
+            <a href={`/students/${student.id}/diet/new`} class="btn-primary text-xs">Diyet Oluştur</a>
+          </div>
+        )}
+      </div>
+
+      <!-- Weight History -->
+      <div class="card">
+        <h3 class="text-lg font-semibold text-text-primary mb-4 flex items-center gap-2">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-accent-primary"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
+          Kilo Geçmişi
+        </h3>
+        {student.weightHistory.length > 0 ? (
+          <div class="space-y-2 max-h-[250px] overflow-y-auto">
+            {student.weightHistory.map(record => (
+              <div class="flex items-center justify-between p-3 rounded-lg bg-bg-tertiary">
+                <span class="text-sm text-text-secondary">
+                  {new Date(record.date).toLocaleDateString('tr-TR')}
+                </span>
+                <span class="font-semibold text-text-primary">{record.weight} kg</span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div class="text-center py-8 text-text-muted">
+            <p>Henüz kilo kaydı yok</p>
+          </div>
+        )}
+      </div>
+
+      <!-- Health Notes -->
+      <div class="card">
+        <h3 class="text-lg font-semibold text-text-primary mb-4 flex items-center gap-2">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-accent-purple"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/></svg>
+          Sağlık Notları
+        </h3>
+        {student.healthNotes ? (
+          <p class="text-sm text-text-secondary leading-relaxed">{student.healthNotes}</p>
+        ) : (
+          <div class="text-center py-8 text-text-muted">
+            <p>Sağlık notu eklenmemiş</p>
+          </div>
+        )}
+      </div>
+    </div>
+  </div>
+
+  <!-- Weight Modal -->
+  <div id="weightModal" class="hidden fixed inset-0 bg-black/60 backdrop-blur-sm z-[200] flex items-center justify-center p-4">
+    <div class="bg-bg-card border border-border-default rounded-2xl p-6 w-full max-w-md">
+      <h3 class="text-xl font-bold text-text-primary mb-4">Kilo Güncelle</h3>
+      <form method="POST">
+        <input type="hidden" name="action" value="update_weight" />
+        <div class="mb-4">
+          <label class="label">Yeni Kilo (kg)</label>
+          <input type="number" name="weight" step="0.1" class="input-field mt-2" placeholder="75.5" required />
+        </div>
+        <div class="flex gap-3">
+          <button type="button" onclick="document.getElementById('weightModal').classList.add('hidden')" class="btn-secondary flex-1">İptal</button>
+          <button type="submit" class="btn-primary flex-1">Kaydet</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Profile Edit Modal -->
+  <div id="profileModal" class="hidden fixed inset-0 bg-black/60 backdrop-blur-sm z-[200] flex items-center justify-center p-4">
+    <div class="bg-bg-card border border-border-default rounded-2xl p-6 w-full max-w-lg">
+      <h3 class="text-xl font-bold text-text-primary mb-4">Profili Düzenle</h3>
+      <form method="POST">
+        <input type="hidden" name="action" value="update_profile" />
+        <div class="grid grid-cols-2 gap-4 mb-4">
+          <div>
+            <label class="label">Boy (cm)</label>
+            <input type="number" name="height" step="0.1" class="input-field mt-2" placeholder="175" value={student.height || ''} />
+          </div>
+          <div>
+            <label class="label">Yaş</label>
+            <input type="number" name="age" class="input-field mt-2" placeholder="25" value={student.age || ''} />
+          </div>
+          <div>
+            <label class="label">Hedef Kilo (kg)</label>
+            <input type="number" name="targetWeight" step="0.1" class="input-field mt-2" placeholder="70" value={student.targetWeight || ''} />
+          </div>
+          <div>
+            <label class="label">Cinsiyet</label>
+            <select name="gender" class="input-field mt-2">
+              <option value="">Seçiniz</option>
+              <option value="male" selected={student.gender === 'male'}>Erkek</option>
+              <option value="female" selected={student.gender === 'female'}>Kadın</option>
+            </select>
+          </div>
+        </div>
+        <div class="mb-4">
+          <label class="label">Sağlık Notları</label>
+          <textarea name="healthNotes" class="input-field mt-2" rows="3" placeholder="Alerji, sakatlık, kronik hastalık vb.">{student.healthNotes || ''}</textarea>
+        </div>
+        <div class="flex gap-3">
+          <button type="button" onclick="document.getElementById('profileModal').classList.add('hidden')" class="btn-secondary flex-1">İptal</button>
+          <button type="submit" class="btn-primary flex-1">Kaydet</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</MainLayout>

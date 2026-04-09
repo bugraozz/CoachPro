@@ -1,0 +1,417 @@
+---
+import MainLayout from '../../layouts/MainLayout.astro';
+import { getUserFromRequest, isBackofficeUser } from '../../lib/auth';
+import prisma from '../../lib/prisma';
+import {
+  getCoachStudentPackageDiscount,
+  getGlobalCoachSubscriptionDiscount,
+  setCoachStudentPackageDiscount,
+  setGlobalCoachSubscriptionDiscount,
+} from '../../lib/pricing';
+
+const user = await getUserFromRequest(Astro.request);
+
+if (!user) {
+  return Astro.redirect('/auth/login');
+}
+
+if (!isBackofficeUser(user)) {
+  return Astro.redirect('/dashboard');
+}
+
+const ok = (Astro.url.searchParams.get('ok') || '').trim();
+const error = (Astro.url.searchParams.get('error') || '').trim();
+
+if (Astro.request.method === 'POST') {
+  const formData = await Astro.request.formData();
+  const action = String(formData.get('action') || '').trim();
+
+  try {
+    if (action === 'toggle_user_active') {
+      const targetUserId = String(formData.get('userId') || '').trim();
+      const nextState = String(formData.get('nextState') || '').trim() === '1';
+
+      if (!targetUserId) {
+        throw new Error('Kullanici secilemedi.');
+      }
+
+      if (targetUserId === user.id && !nextState) {
+        throw new Error('Kendi admin hesabinizi pasif yapamazsiniz.');
+      }
+
+      const updated = await prisma.user.updateMany({
+        where: { id: targetUserId },
+        data: { active: nextState },
+      });
+
+      if (!updated.count) {
+        throw new Error('Kullanici bulunamadi.');
+      }
+
+      return Astro.redirect('/admin/users?ok=user-updated');
+    }
+
+    if (action === 'grant_free_coach_access') {
+      const coachId = String(formData.get('coachId') || '').trim();
+      const permanent = String(formData.get('permanent') || '').trim() === 'true';
+      const monthsRaw = parseInt(String(formData.get('months') || '1').trim(), 10);
+      const months = Number.isNaN(monthsRaw) ? 1 : Math.min(36, Math.max(1, monthsRaw));
+
+      if (!coachId) {
+        throw new Error('Egitmen secilemedi.');
+      }
+
+      const subscriptionEnd = permanent
+        ? null
+        : new Date(new Date().setMonth(new Date().getMonth() + months));
+
+      const updated = await prisma.user.updateMany({
+        where: {
+          id: coachId,
+          role: 'coach',
+        },
+        data: {
+          active: true,
+          subscriptionStatus: 'active',
+          subscriptionEnd,
+          subscriptionId: permanent ? 'admin-granted-permanent' : `admin-granted-${Date.now()}`,
+        },
+      });
+
+      if (!updated.count) {
+        throw new Error('Egitmen bulunamadi.');
+      }
+
+      return Astro.redirect('/admin/users?ok=coach-activated');
+    }
+
+    if (action === 'save_global_discount') {
+      const enabled = String(formData.get('enabled') || '').trim() === 'true';
+      const amountRaw = parseInt(String(formData.get('amount') || '0').trim(), 10);
+      const amount = Number.isNaN(amountRaw) ? -1 : amountRaw;
+
+      if (amount < 0) {
+        throw new Error('Indirim tutari gecersiz.');
+      }
+
+      await setGlobalCoachSubscriptionDiscount({
+        enabled,
+        amount,
+        updatedBy: user.id,
+      });
+
+      return Astro.redirect('/admin/users?ok=global-discount-saved');
+    }
+
+    if (action === 'save_coach_discount') {
+      const coachId = String(formData.get('coachId') || '').trim();
+      const enabled = String(formData.get('enabled') || '').trim() === 'true';
+      const amountRaw = parseInt(String(formData.get('amount') || '0').trim(), 10);
+      const amount = Number.isNaN(amountRaw) ? -1 : amountRaw;
+
+      if (!coachId) {
+        throw new Error('Egitmen secilemedi.');
+      }
+
+      if (amount < 0) {
+        throw new Error('Indirim tutari gecersiz.');
+      }
+
+      const coach = await prisma.user.findFirst({
+        where: { id: coachId, role: 'coach' },
+        select: { id: true },
+      });
+
+      if (!coach) {
+        throw new Error('Egitmen bulunamadi.');
+      }
+
+      await setCoachStudentPackageDiscount(coachId, {
+        enabled,
+        amount,
+        updatedBy: user.id,
+      });
+
+      return Astro.redirect('/admin/users?ok=coach-discount-saved');
+    }
+  } catch (postError) {
+    const message = postError instanceof Error ? postError.message : 'Islem tamamlanamadi.';
+    return Astro.redirect(`/admin/users?error=${encodeURIComponent(message)}`);
+  }
+
+  return Astro.redirect('/admin/users');
+}
+
+const [coaches, students, globalCoachDiscount] = await Promise.all([
+  prisma.user.findMany({
+    where: { role: 'coach' },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      active: true,
+      referralCode: true,
+      subscriptionStatus: true,
+      subscriptionEnd: true,
+      createdAt: true,
+      _count: {
+        select: {
+          students: true,
+        },
+      },
+    },
+    orderBy: { createdAt: 'desc' },
+    take: 300,
+  }),
+  prisma.user.findMany({
+    where: { role: 'student' },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      active: true,
+      createdAt: true,
+      coach: {
+        select: {
+          id: true,
+          name: true,
+        },
+      },
+    },
+    orderBy: { createdAt: 'desc' },
+    take: 400,
+  }),
+  getGlobalCoachSubscriptionDiscount(),
+]);
+
+const coachDiscountEntries = await Promise.all(
+  coaches.map(async (coach) => {
+    const discount = await getCoachStudentPackageDiscount(coach.id);
+    return [coach.id, discount] as const;
+  }),
+);
+
+const coachDiscountById = Object.fromEntries(coachDiscountEntries) as Record<string, {
+  enabled: boolean;
+  amount: number;
+  updatedAt: string | null;
+  updatedBy: string | null;
+}>;
+---
+
+<MainLayout title="Admin Kullanici Yonetimi" activePage="admin">
+  <header class="px-6 lg:px-8 py-5 border-b border-border-default bg-bg-secondary/80 backdrop-blur-xl sticky top-0 z-50">
+    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+      <div>
+        <h1 class="text-2xl font-bold text-text-primary">Admin Kullanici Yonetimi</h1>
+        <p class="text-sm text-text-secondary mt-1">Kullanicilari yonetin, egitmen aboneligini ucretsiz aktif edin, indirimleri yonetin.</p>
+      </div>
+      <a href="/admin" class="btn-secondary">Admin Ozetine Don</a>
+    </div>
+  </header>
+
+  <div class="p-6 lg:p-8 space-y-8">
+    {ok && (
+      <div class="p-4 rounded-lg bg-accent-green/10 border border-accent-green/20 text-accent-green text-sm">
+        Islem basariyla tamamlandi.
+      </div>
+    )}
+
+    {error && (
+      <div class="p-4 rounded-lg bg-accent-red/10 border border-accent-red/20 text-accent-red text-sm">
+        {error}
+      </div>
+    )}
+
+    <section class="card">
+      <div class="mb-4">
+        <h2 class="text-lg font-semibold text-text-primary">Global Egitmen Abonelik Indirimi</h2>
+        <p class="text-sm text-text-muted mt-1">Landing ve egitmen odeme ekraninda gorunur.</p>
+      </div>
+
+      <div class="mb-4 p-4 rounded-xl border border-border-default bg-bg-tertiary/20">
+        <p class="text-sm text-text-secondary">
+          Mevcut durum:
+          <span class={`ml-1 font-semibold ${globalCoachDiscount.enabled && globalCoachDiscount.amount > 0 ? 'text-accent-green' : 'text-text-primary'}`}>
+            {globalCoachDiscount.enabled && globalCoachDiscount.amount > 0
+              ? `Aktif (-₺${globalCoachDiscount.amount})`
+              : 'Pasif'}
+          </span>
+        </p>
+      </div>
+
+      <form method="POST" class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <input type="hidden" name="action" value="save_global_discount" />
+
+        <div>
+          <label class="label block mb-2">Indirim Tutari (₺)</label>
+          <input type="number" name="amount" min="0" step="1" value={globalCoachDiscount.amount} class="input-field" required />
+        </div>
+
+        <div>
+          <label class="label block mb-2">Durum</label>
+          <select name="enabled" class="input-field" required>
+            <option value="true" selected={globalCoachDiscount.enabled}>Aktif</option>
+            <option value="false" selected={!globalCoachDiscount.enabled}>Pasif</option>
+          </select>
+        </div>
+
+        <div class="flex items-end">
+          <button type="submit" class="btn-primary w-full justify-center">Global Indirimi Kaydet</button>
+        </div>
+      </form>
+    </section>
+
+    <section class="card overflow-hidden">
+      <div class="mb-5">
+        <h2 class="text-lg font-semibold text-text-primary">Egitmen Yonetimi</h2>
+        <p class="text-sm text-text-muted mt-1">Ucretsiz aktivasyon ve egitmene ozel ogrenci indirimi.</p>
+      </div>
+
+      {coaches.length > 0 ? (
+        <div class="overflow-x-auto">
+          <table class="w-full min-w-260 text-sm">
+            <thead>
+              <tr class="border-b border-border-default/60">
+                <th class="text-left py-3 px-2 text-xs uppercase tracking-wider text-text-muted">Egitmen</th>
+                <th class="text-left py-3 px-2 text-xs uppercase tracking-wider text-text-muted">Abonelik</th>
+                <th class="text-left py-3 px-2 text-xs uppercase tracking-wider text-text-muted">Ogrenci</th>
+                <th class="text-left py-3 px-2 text-xs uppercase tracking-wider text-text-muted">Referral</th>
+                <th class="text-left py-3 px-2 text-xs uppercase tracking-wider text-text-muted">Ucretsiz Aktivasyon</th>
+                <th class="text-left py-3 px-2 text-xs uppercase tracking-wider text-text-muted">Paket Indirimi</th>
+                <th class="text-left py-3 px-2 text-xs uppercase tracking-wider text-text-muted">Hesap</th>
+              </tr>
+            </thead>
+            <tbody>
+              {coaches.map((coach) => {
+                const coachDiscount = coachDiscountById[coach.id] || { enabled: false, amount: 0, updatedAt: null, updatedBy: null };
+                return (
+                  <tr class="border-b border-border-default/40 align-top">
+                    <td class="py-3 px-2 text-text-secondary">
+                      <p class="font-medium text-text-primary">{coach.name}</p>
+                      <p class="text-xs text-text-muted">{coach.email}</p>
+                    </td>
+                    <td class="py-3 px-2 text-text-secondary">
+                      <p>{coach.subscriptionStatus || 'pending'}</p>
+                      <p class="text-xs text-text-muted mt-1">
+                        {coach.subscriptionEnd ? new Date(coach.subscriptionEnd).toLocaleDateString('tr-TR') : 'Suresiz / tanimsiz'}
+                      </p>
+                    </td>
+                    <td class="py-3 px-2 text-text-secondary">{coach._count.students}</td>
+                    <td class="py-3 px-2 text-text-secondary">{coach.referralCode || '-'}</td>
+                    <td class="py-3 px-2">
+                      <form method="POST" class="space-y-2">
+                        <input type="hidden" name="action" value="grant_free_coach_access" />
+                        <input type="hidden" name="coachId" value={coach.id} />
+                        <div class="flex items-center gap-2">
+                          <input type="number" name="months" min="1" max="36" value="1" class="input-field h-9 text-xs" />
+                          <button type="submit" class="btn-secondary text-xs">Aktif Et</button>
+                        </div>
+                        <label class="inline-flex items-center gap-2 text-xs text-text-secondary">
+                          <input type="checkbox" name="permanent" value="true" class="accent-accent-primary" />
+                          Suresiz aktif et
+                        </label>
+                      </form>
+                    </td>
+                    <td class="py-3 px-2">
+                      <form method="POST" class="space-y-2">
+                        <input type="hidden" name="action" value="save_coach_discount" />
+                        <input type="hidden" name="coachId" value={coach.id} />
+                        <div class="flex items-center gap-2">
+                          <input
+                            type="number"
+                            name="amount"
+                            min="0"
+                            step="1"
+                            value={coachDiscount.amount}
+                            class="input-field h-9 text-xs"
+                            required
+                          />
+                          <select name="enabled" class="input-field h-9 text-xs" required>
+                            <option value="true" selected={coachDiscount.enabled}>Aktif</option>
+                            <option value="false" selected={!coachDiscount.enabled}>Pasif</option>
+                          </select>
+                        </div>
+                        <button type="submit" class="btn-secondary text-xs">Indirimi Kaydet</button>
+                      </form>
+                    </td>
+                    <td class="py-3 px-2">
+                      <form method="POST">
+                        <input type="hidden" name="action" value="toggle_user_active" />
+                        <input type="hidden" name="userId" value={coach.id} />
+                        <input type="hidden" name="nextState" value={coach.active ? '0' : '1'} />
+                        <button
+                          type="submit"
+                          class={`px-3 py-2 rounded-lg text-xs font-medium ${coach.active
+                            ? 'bg-accent-red/10 text-accent-red border border-accent-red/20'
+                            : 'bg-accent-green/10 text-accent-green border border-accent-green/20'
+                          }`}
+                        >
+                          {coach.active ? 'Pasif Yap' : 'Aktif Yap'}
+                        </button>
+                      </form>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <p class="text-sm text-text-muted">Egitmen kaydi bulunamadi.</p>
+      )}
+    </section>
+
+    <section class="card overflow-hidden">
+      <div class="mb-5">
+        <h2 class="text-lg font-semibold text-text-primary">Ogrenci Kullanici Listesi</h2>
+        <p class="text-sm text-text-muted mt-1">Aktif/pasif yonetimi ve bagli egitmen gorunumu.</p>
+      </div>
+
+      {students.length > 0 ? (
+        <div class="overflow-x-auto">
+          <table class="w-full min-w-180 text-sm">
+            <thead>
+              <tr class="border-b border-border-default/60">
+                <th class="text-left py-3 px-2 text-xs uppercase tracking-wider text-text-muted">Ogrenci</th>
+                <th class="text-left py-3 px-2 text-xs uppercase tracking-wider text-text-muted">Bagli Egitmen</th>
+                <th class="text-left py-3 px-2 text-xs uppercase tracking-wider text-text-muted">Kayit</th>
+                <th class="text-left py-3 px-2 text-xs uppercase tracking-wider text-text-muted">Hesap</th>
+              </tr>
+            </thead>
+            <tbody>
+              {students.map((student) => (
+                <tr class="border-b border-border-default/40 align-top">
+                  <td class="py-3 px-2 text-text-secondary">
+                    <p class="font-medium text-text-primary">{student.name}</p>
+                    <p class="text-xs text-text-muted">{student.email}</p>
+                  </td>
+                  <td class="py-3 px-2 text-text-secondary">{student.coach?.name || '-'}</td>
+                  <td class="py-3 px-2 text-text-secondary">{new Date(student.createdAt).toLocaleDateString('tr-TR')}</td>
+                  <td class="py-3 px-2">
+                    <form method="POST">
+                      <input type="hidden" name="action" value="toggle_user_active" />
+                      <input type="hidden" name="userId" value={student.id} />
+                      <input type="hidden" name="nextState" value={student.active ? '0' : '1'} />
+                      <button
+                        type="submit"
+                        class={`px-3 py-2 rounded-lg text-xs font-medium ${student.active
+                          ? 'bg-accent-red/10 text-accent-red border border-accent-red/20'
+                          : 'bg-accent-green/10 text-accent-green border border-accent-green/20'
+                        }`}
+                      >
+                        {student.active ? 'Pasif Yap' : 'Aktif Yap'}
+                      </button>
+                    </form>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <p class="text-sm text-text-muted">Ogrenci kaydi bulunamadi.</p>
+      )}
+    </section>
+  </div>
+</MainLayout>

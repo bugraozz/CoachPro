@@ -1,0 +1,49 @@
+---
+import MainLayout from '../../layouts/MainLayout.astro';
+import ClientProfile from '../../components/ClientProfile';
+import prisma from '../../lib/prisma';
+
+const { id } = Astro.params;
+
+if (!id) {
+  return Astro.redirect('/clients');
+}
+
+const client = await prisma.user.findFirst({
+  where: { id, role: 'student' },
+  include: {
+    weightHistory: { orderBy: { date: 'desc' } },
+    measurements: { orderBy: { date: 'desc' } },
+    bodyAnalyses: { orderBy: { date: 'desc' } },
+    programs: {
+      include: {
+        days: {
+          include: { exercises: { orderBy: { order: 'asc' } } },
+          orderBy: { order: 'asc' },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    },
+    dietPlans: {
+      include: {
+        meals: {
+          include: { foods: true },
+          orderBy: { order: 'asc' },
+        },
+        compliance: { orderBy: { date: 'desc' }, take: 30 },
+      },
+      orderBy: { createdAt: 'desc' },
+    },
+  },
+});
+
+if (!client) {
+  return Astro.redirect('/clients');
+}
+
+const clientData = JSON.parse(JSON.stringify(client));
+---
+
+<MainLayout title={client.name} activePage="clients">
+  <ClientProfile client={clientData} client:load />
+</MainLayout>

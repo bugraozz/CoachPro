@@ -1,0 +1,57 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: coachpro_db
+    restart: unless-stopped
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: coachpro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d coachpro"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    volumes:
+      - coachpro_db_data_v2:/var/lib/postgresql/data
+
+  python-service:
+    build:
+      context: ./python-service
+      dockerfile: Dockerfile
+    container_name: coachpro_python
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  web:
+    build:
+      context: ./astro-app
+      dockerfile: Dockerfile
+    container_name: coachpro_web
+    restart: unless-stopped
+    env_file:
+      - ./astro-app/.env
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/coachpro?schema=public
+      PYTHON_API_URL: http://python-service:8000
+      PUBLIC_APP_URL: http://localhost:4321
+    ports:
+      - "4321:4321"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      python-service:
+        condition: service_healthy
+
+volumes:
+  coachpro_db_data_v2:

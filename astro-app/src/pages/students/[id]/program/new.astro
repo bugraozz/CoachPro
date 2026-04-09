@@ -1,0 +1,353 @@
+---
+import MainLayout from '../../../../layouts/MainLayout.astro';
+import { getUserFromRequest, isCoach } from '../../../../lib/auth';
+import prisma from '../../../../lib/prisma';
+
+const user = await getUserFromRequest(Astro.request);
+
+if (!user) {
+  return Astro.redirect('/auth/login');
+}
+
+if (!isCoach(user)) {
+  return Astro.redirect('/dashboard');
+}
+
+const { id } = Astro.params;
+
+const student = await prisma.user.findFirst({
+  where: { id, coachId: user.id, role: 'student' },
+  select: { id: true, name: true, currentWeight: true, targetWeight: true, height: true },
+});
+
+if (!student) {
+  return Astro.redirect('/students');
+}
+---
+
+<MainLayout title={`Program Oluştur - ${student.name}`} activePage="students">
+  <header class="px-6 lg:px-8 py-5 border-b border-border-default bg-bg-secondary/80 backdrop-blur-xl sticky top-0 z-50">
+    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+      <div class="flex items-center gap-4">
+        <a href={`/students/${student.id}`} class="p-2 rounded-lg text-text-secondary hover:text-text-primary hover:bg-bg-tertiary transition-all">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"/></svg>
+        </a>
+        <div>
+          <h1 class="text-2xl font-bold text-text-primary">Yeni Program Oluştur</h1>
+          <p class="text-sm text-text-secondary mt-0.5">{student.name} için antrenman programı</p>
+        </div>
+      </div>
+      <div class="flex items-center gap-3">
+        <button id="saveBtn" class="btn-primary" disabled>
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+          Programı Kaydet
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <div class="p-6 lg:p-8">
+    <!-- Program Config -->
+    <div class="card mb-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div>
+        <label class="label mb-2">Program Adı</label>
+        <input type="text" id="programName" class="input-field" placeholder="Örn: Kas Geliştirme Programı, Full Body..." />
+      </div>
+      <div>
+        <label class="label mb-2">Hedef / Kategori</label>
+        <select id="programCategory" class="input-field">
+          <option value="Fitness">Fitness / Vücut Geliştirme</option>
+          <option value="Yüzme">Yüzme</option>
+          <option value="Pilates">Pilates</option>
+          <option value="Kardiyo">Kardiyo / Koşu</option>
+          <option value="Yoga">Yoga</option>
+          <option value="Diğer">Diğer</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- Days Container -->
+    <div id="daysContainer" class="space-y-6">
+      <!-- Days will be added here dynamically -->
+    </div>
+
+    <!-- Add Day Button -->
+    <button id="addDayBtn" class="w-full mt-6 py-4 border-2 border-dashed border-border-default rounded-xl text-text-muted hover:text-accent-primary hover:border-accent-primary transition-all flex items-center justify-center gap-2 text-sm font-medium">
+      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      Gün Ekle
+    </button>
+
+    <!-- Status Message -->
+    <div id="statusMsg" class="hidden mt-6 p-4 rounded-xl text-sm"></div>
+  </div>
+
+  <script is:inline define:vars={{ studentId: student.id }}>
+    const muscleGroups = ['Göğüs', 'Sırt', 'Omuz', 'Biceps', 'Triceps', 'Bacak', 'Kalça', 'Karın', 'Ön Kol', 'Trapez', 'Baldır', 'Tüm Vücut', 'Kardiyo'];
+    
+    const defaultDayNames = ['Pazartesi', 'Salı', 'Çarşamba', 'Perşembe', 'Cuma', 'Cumartesi', 'Pazar', 'Gün 1', 'Gün 2', 'Gün 3'];
+    
+    let days = [];
+    let dayCounter = 0;
+
+    function createExerciseRow(dayIdx, exIdx) {
+      return `
+        <div class="exercise-row grid grid-cols-12 gap-2 items-start p-3 rounded-lg bg-bg-tertiary/50 border border-border-default/50" data-ex="${exIdx}">
+          <div class="col-span-12 sm:col-span-3">
+            <input type="text" placeholder="Egzersiz adı" class="input-field text-sm ex-name" />
+          </div>
+          <div class="col-span-6 sm:col-span-2">
+            <select class="input-field text-sm ex-muscle">
+              <option value="">Kas Grubu</option>
+              ${muscleGroups.map(m => `<option value="${m}">${m}</option>`).join('')}
+            </select>
+          </div>
+          <div class="col-span-3 sm:col-span-1">
+            <input type="number" placeholder="Set" class="input-field text-sm text-center ex-sets" min="1" />
+          </div>
+          <div class="col-span-3 sm:col-span-2">
+            <input type="text" placeholder="Tekrar" class="input-field text-sm text-center ex-reps" />
+          </div>
+          <div class="col-span-3 sm:col-span-1">
+            <input type="number" placeholder="kg" class="input-field text-sm text-center ex-weight" step="0.5" min="0" />
+          </div>
+          <div class="col-span-3 sm:col-span-1">
+            <input type="number" placeholder="sn" class="input-field text-sm text-center ex-rest" min="0" step="5" />
+          </div>
+          <div class="col-span-3 sm:col-span-1">
+            <input type="text" placeholder="Not" class="input-field text-sm ex-notes" />
+          </div>
+          <div class="col-span-3 sm:col-span-1 flex items-center justify-end gap-1">
+            <button class="move-ex-up p-1 rounded hover:bg-bg-tertiary text-text-muted hover:text-text-primary transition-colors" title="Yukarı">
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m18 15-6-6-6 6"/></svg>
+            </button>
+            <button class="move-ex-down p-1 rounded hover:bg-bg-tertiary text-text-muted hover:text-text-primary transition-colors" title="Aşağı">
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+            <button class="remove-ex p-1 rounded hover:bg-accent-red/10 text-text-muted hover:text-accent-red transition-colors" title="Sil">
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+          </div>
+        </div>
+      `;
+    }
+
+    function createDayCard(dayIdx) {
+      const dayName = defaultDayNames[dayIdx] || `Gün ${dayIdx + 1}`;
+      const div = document.createElement('div');
+      div.className = 'card day-card';
+      div.dataset.day = dayIdx;
+      div.innerHTML = `
+        <div class="flex items-center justify-between mb-4">
+          <div class="flex items-center gap-3">
+            <span class="w-10 h-10 rounded-xl bg-accent-primary/10 flex items-center justify-center text-sm font-bold text-accent-primary">${dayIdx + 1}</span>
+            <input type="text" value="${dayName}" class="day-name text-lg font-semibold text-text-primary bg-transparent border-none outline-none focus:ring-0 w-[200px]" />
+          </div>
+          <div class="flex items-center gap-2">
+            <span class="exercise-count text-xs text-text-muted bg-bg-tertiary px-2 py-1 rounded">0 egzersiz</span>
+            <button class="remove-day p-2 rounded-lg hover:bg-accent-red/10 text-text-muted hover:text-accent-red transition-all" title="Günü Sil">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- Column Headers -->
+        <div class="hidden sm:grid grid-cols-12 gap-2 px-3 mb-2 text-[10px] font-semibold text-text-muted uppercase tracking-wider">
+          <div class="col-span-3">Egzersiz</div>
+          <div class="col-span-2">Kas Grubu</div>
+          <div class="col-span-1 text-center">Set</div>
+          <div class="col-span-2 text-center">Tekrar</div>
+          <div class="col-span-1 text-center">Ağırlık</div>
+          <div class="col-span-1 text-center">Dinlenme</div>
+          <div class="col-span-1 text-center">Not</div>
+          <div class="col-span-1"></div>
+        </div>
+
+        <div class="exercises-container space-y-2">
+          ${createExerciseRow(dayIdx, 0)}
+        </div>
+
+        <button class="add-exercise-btn w-full mt-3 py-2.5 border border-dashed border-border-default rounded-lg text-text-muted hover:text-accent-green hover:border-accent-green transition-all flex items-center justify-center gap-2 text-xs font-medium">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          Egzersiz Ekle
+        </button>
+      `;
+      return div;
+    }
+
+    function addDay() {
+      const container = document.getElementById('daysContainer');
+      const card = createDayCard(dayCounter);
+      container.appendChild(card);
+      dayCounter++;
+      bindDayEvents(card);
+      updateSaveBtn();
+    }
+
+    function bindDayEvents(card) {
+      // Remove day
+      card.querySelector('.remove-day').addEventListener('click', () => {
+        card.remove();
+        updateDayNumbers();
+        updateSaveBtn();
+      });
+
+      // Add exercise
+      card.querySelector('.add-exercise-btn').addEventListener('click', () => {
+        const container = card.querySelector('.exercises-container');
+        const exCount = container.querySelectorAll('.exercise-row').length;
+        container.insertAdjacentHTML('beforeend', createExerciseRow(0, exCount));
+        bindExerciseEvents(card);
+        updateExerciseCount(card);
+      });
+
+      bindExerciseEvents(card);
+    }
+
+    function bindExerciseEvents(card) {
+      const container = card.querySelector('.exercises-container');
+      
+      container.querySelectorAll('.remove-ex').forEach(btn => {
+        btn.onclick = () => {
+          const rows = container.querySelectorAll('.exercise-row');
+          if (rows.length > 1) {
+            btn.closest('.exercise-row').remove();
+            updateExerciseCount(card);
+            updateSaveBtn();
+          }
+        };
+      });
+
+      container.querySelectorAll('.move-ex-up').forEach(btn => {
+        btn.onclick = () => {
+          const row = btn.closest('.exercise-row');
+          const prev = row.previousElementSibling;
+          if (prev) container.insertBefore(row, prev);
+        };
+      });
+
+      container.querySelectorAll('.move-ex-down').forEach(btn => {
+        btn.onclick = () => {
+          const row = btn.closest('.exercise-row');
+          const next = row.nextElementSibling;
+          if (next) container.insertBefore(next, row);
+        };
+      });
+
+      // Auto-update on input
+      container.querySelectorAll('input, select').forEach(input => {
+        input.addEventListener('input', () => {
+          updateExerciseCount(card);
+          updateSaveBtn();
+        });
+      });
+    }
+
+    function updateExerciseCount(card) {
+      const count = card.querySelectorAll('.exercise-row').length;
+      const filled = card.querySelectorAll('.ex-name').length;
+      let filledCount = 0;
+      card.querySelectorAll('.ex-name').forEach(input => {
+        if (input.value.trim()) filledCount++;
+      });
+      card.querySelector('.exercise-count').textContent = `${filledCount} egzersiz`;
+    }
+
+    function updateDayNumbers() {
+      document.querySelectorAll('.day-card').forEach((card, idx) => {
+        card.querySelector('.w-10').textContent = idx + 1;
+      });
+    }
+
+    function updateSaveBtn() {
+      const name = document.getElementById('programName').value.trim();
+      const dayCards = document.querySelectorAll('.day-card');
+      let hasExercise = false;
+      
+      dayCards.forEach(card => {
+        card.querySelectorAll('.ex-name').forEach(input => {
+          if (input.value.trim()) hasExercise = true;
+        });
+      });
+
+      document.getElementById('saveBtn').disabled = !(name && dayCards.length > 0 && hasExercise);
+    }
+
+    document.getElementById('programName').addEventListener('input', updateSaveBtn);
+
+    // Add Day button
+    document.getElementById('addDayBtn').addEventListener('click', addDay);
+
+    // Save button
+    document.getElementById('saveBtn').addEventListener('click', async () => {
+      const btn = document.getElementById('saveBtn');
+      const statusMsg = document.getElementById('statusMsg');
+      
+      btn.disabled = true;
+      btn.innerHTML = '<svg class="animate-spin" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg> Kaydediliyor...';
+
+const programName = document.getElementById('programName').value.trim();
+      const programCategory = document.getElementById('programCategory').value;
+      const dayCards = document.querySelectorAll('.day-card');
+      
+      const daysData = [];
+      dayCards.forEach((card, dayIdx) => {
+        const dayName = card.querySelector('.day-name').value.trim() || `Gün ${dayIdx + 1}`;
+        const exercises = [];
+        
+        card.querySelectorAll('.exercise-row').forEach((row, exIdx) => {
+          const name = row.querySelector('.ex-name').value.trim();
+          if (!name) return;
+          
+          exercises.push({
+            name,
+            muscleGroup: row.querySelector('.ex-muscle').value || 'Genel',
+            sets: parseInt(row.querySelector('.ex-sets').value) || 3,
+            reps: row.querySelector('.ex-reps').value || '10',
+            weight: parseFloat(row.querySelector('.ex-weight').value) || null,
+            restSeconds: parseInt(row.querySelector('.ex-rest').value) || null,
+            notes: row.querySelector('.ex-notes').value.trim() || null,
+            order: exIdx,
+          });
+        });
+
+        if (exercises.length > 0) {
+          daysData.push({ dayName, order: dayIdx, exercises });
+        }
+      });
+
+      try {
+        const res = await fetch('/api/programs', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            studentId: studentId,
+            name: programName,
+            category: programCategory,
+            days: daysData,
+          }),
+        });
+
+        if (res.ok) {
+          statusMsg.className = 'mt-6 p-4 rounded-xl text-sm bg-accent-green/10 border border-accent-green/20 text-accent-green';
+          statusMsg.textContent = 'Program başarıyla oluşturuldu! Yönlendiriliyorsunuz...';
+          statusMsg.classList.remove('hidden');
+          setTimeout(() => {
+            window.location.href = `/students/${studentId}`;
+          }, 1500);
+        } else {
+          const err = await res.json();
+          throw new Error(err.error || 'Bir hata oluştu');
+        }
+      } catch (e) {
+        statusMsg.className = 'mt-6 p-4 rounded-xl text-sm bg-accent-red/10 border border-accent-red/20 text-accent-red';
+        statusMsg.textContent = e.message;
+        statusMsg.classList.remove('hidden');
+        btn.disabled = false;
+        btn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg> Programı Kaydet';
+      }
+    });
+
+    // Start with one day
+    addDay();
+  </script>
+</MainLayout>

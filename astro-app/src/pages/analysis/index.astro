@@ -1,0 +1,573 @@
+---
+import MainLayout from '../../layouts/MainLayout.astro';
+import { getUserFromRequest, isCoach } from '../../lib/auth';
+import prisma from '../../lib/prisma';
+
+const user = await getUserFromRequest(Astro.request);
+
+if (!user) {
+  return Astro.redirect('/auth/login');
+}
+
+const userIsCoach = isCoach(user);
+
+let students: any[] = [];
+if (userIsCoach) {
+  students = await prisma.user.findMany({
+    where: { coachId: user.id, role: 'student' },
+    select: { id: true, name: true, email: true },
+    orderBy: { name: 'asc' },
+  });
+}
+
+let analyses: any[] = [];
+if (userIsCoach) {
+  const studentIds = students.map(s => s.id);
+  analyses = await prisma.bodyAnalysis.findMany({
+    where: { userId: { in: [...studentIds] } },
+    include: { user: { select: { id: true, name: true } } },
+    orderBy: { date: 'desc' },
+  });
+} else {
+  analyses = await prisma.bodyAnalysis.findMany({
+    where: { userId: user.id },
+    include: { user: { select: { id: true, name: true } } },
+    orderBy: { date: 'desc' },
+  });
+}
+
+// JSON serialize for client-side
+const analysesJson = JSON.stringify(analyses.map(a => ({
+  id: a.id,
+  imageUrl: a.imageUrl,
+  analysisType: a.analysisType,
+  date: a.date,
+  landmarks: a.landmarks,
+  angles: a.angles,
+  postureScore: a.postureScore,
+  postureNotes: a.postureNotes,
+  muscleDensity: a.muscleDensity,
+  userName: a.user?.name || '',
+})));
+---
+
+<MainLayout title="Vücut Analizi" activePage="analysis">
+  <header class="px-6 lg:px-8 py-5 border-b border-border-default bg-bg-secondary/80 backdrop-blur-xl sticky top-0 z-50">
+    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+      <div>
+        <h1 class="text-2xl font-bold text-text-primary">Vücut Analizi</h1>
+        <p class="text-sm text-text-secondary mt-1">AI destekli postür ve vücut analizi</p>
+      </div>
+      <button id="newAnalysisBtn" class="btn-primary">
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+        Yeni Analiz
+      </button>
+    </div>
+  </header>
+
+  <div class="p-6 lg:p-8">
+    <!-- Upload Area -->
+    <div id="uploadArea" class="hidden card mb-8">
+      <h3 class="text-lg font-semibold text-text-primary mb-4">Yeni Vücut Analizi</h3>
+      
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
+        {userIsCoach && (
+          <div>
+            <label class="block text-sm font-medium text-text-secondary mb-2">Öğrenci Seçin</label>
+            <select id="studentSelect" class="w-full px-4 py-3 rounded-lg border border-border-default bg-bg-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-accent-primary/50">
+              <option value="">-- Öğrenci seçin --</option>
+              {students.map(student => (
+                <option value={student.id}>{student.name} ({student.email})</option>
+              ))}
+            </select>
+          </div>
+        )}
+        <div>
+          <label class="block text-sm font-medium text-text-secondary mb-2">Analiz Tipi</label>
+          <select id="analysisType" class="w-full px-4 py-3 rounded-lg border border-border-default bg-bg-primary text-text-primary focus:outline-none focus:ring-2 focus:ring-accent-primary/50">
+            <option value="front">Ön Görünüm</option>
+            <option value="back">Arka Görünüm</option>
+            <option value="side">Yan Görünüm</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="border-2 border-dashed border-border-default rounded-xl p-8 text-center hover:border-accent-primary transition-colors cursor-pointer" id="dropZone">
+        <div class="w-16 h-16 rounded-2xl bg-accent-primary/10 flex items-center justify-center mx-auto mb-4">
+          <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="text-accent-primary"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        </div>
+        <p class="text-text-primary font-medium mb-2">Fotoğraf yüklemek için tıklayın veya sürükleyin</p>
+        <p class="text-sm text-text-muted">JPG, PNG • Tam vücut fotoğrafı önerilir</p>
+        <input type="file" id="fileInput" accept="image/*" class="hidden" />
+      </div>
+
+      <div id="uploadStatus" class="hidden mt-4 p-4 rounded-lg text-center"></div>
+
+      <div id="pythonStatus" class="mt-3 p-3 rounded-lg bg-bg-tertiary border border-border-default">
+        <div class="flex items-center gap-2">
+          <span id="pythonDot" class="w-2 h-2 rounded-full bg-text-muted"></span>
+          <span id="pythonLabel" class="text-xs text-text-muted">Python AI servisine bağlanılıyor...</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Analysis Grid -->
+    {analyses.length > 0 ? (
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5" id="analysisGrid">
+        {analyses.map(analysis => (
+          <div class="card-interactive group relative analysis-card" data-id={analysis.id}>
+            <!-- Delete Button -->
+            <button 
+              class="delete-analysis-btn absolute top-3 right-3 z-10 w-8 h-8 rounded-lg bg-black/50 hover:bg-accent-red/80 text-white/70 hover:text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all"
+              data-id={analysis.id}
+              title="Analizi Sil"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+            </button>
+
+            <!-- Image with Landmarks Overlay -->
+            <div class="aspect-square rounded-lg overflow-hidden bg-bg-tertiary mb-4 relative cursor-pointer open-detail-btn" data-id={analysis.id}>
+              <img src={analysis.imageUrl} alt="Analiz" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
+              {/* Landmark indicator */}
+              {analysis.landmarks && Array.isArray(analysis.landmarks) && analysis.landmarks.length > 0 && (
+                <div class="absolute top-2 left-2 px-2 py-1 rounded bg-accent-green/80 text-white text-[10px] font-bold">
+                  {analysis.landmarks.length} nokta
+                </div>
+              )}
+            </div>
+            
+            {userIsCoach && analysis.user && (
+              <div class="mb-2">
+                <span class="text-xs font-medium px-2 py-1 rounded-full bg-accent-primary/10 text-accent-primary">
+                  {analysis.user.name}
+                </span>
+              </div>
+            )}
+            <div class="flex items-center justify-between mb-2">
+              <span class="text-sm font-medium text-text-primary">
+                {analysis.analysisType === 'front' ? 'Ön Görünüm' : analysis.analysisType === 'back' ? 'Arka Görünüm' : 'Yan Görünüm'}
+              </span>
+              <span class="text-xs text-text-muted">
+                {new Date(analysis.date).toLocaleDateString('tr-TR')}
+              </span>
+            </div>
+            {analysis.postureScore != null && (
+              <div class="flex items-center gap-2">
+                <div class="flex-1 h-2 bg-bg-tertiary rounded-full overflow-hidden">
+                  <div 
+                    class={`h-full ${analysis.postureScore >= 80 ? 'bg-accent-green' : analysis.postureScore >= 60 ? 'bg-accent-yellow' : 'bg-accent-red'}`}
+                    style={`width: ${Math.min(100, analysis.postureScore)}%`}
+                  ></div>
+                </div>
+                <span class={`text-sm font-semibold ${analysis.postureScore >= 80 ? 'text-accent-green' : analysis.postureScore >= 60 ? 'text-accent-yellow' : 'text-accent-red'}`}>
+                  {analysis.postureScore.toFixed(0)}
+                </span>
+              </div>
+            )}
+            {analysis.postureNotes && (
+              <p class="text-xs text-text-muted mt-2 line-clamp-2">{analysis.postureNotes}</p>
+            )}
+          </div>
+        ))}
+      </div>
+    ) : (
+      <div class="text-center py-16">
+        <div class="w-20 h-20 rounded-3xl bg-bg-tertiary flex items-center justify-center mx-auto mb-6">
+          <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="text-text-muted"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+        </div>
+        <h3 class="text-xl font-bold text-text-primary mb-2">Henüz analiz yok</h3>
+        <p class="text-text-secondary mb-6 max-w-md mx-auto">İlk vücut analizinizi yaparak postür skorunuzu ve gelişim alanlarınızı keşfedin.</p>
+        <button id="emptyStateBtn" class="btn-primary">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+          İlk Analizi Yap
+        </button>
+      </div>
+    )}
+  </div>
+
+  <!-- Detail Modal with Landmark Overlay -->
+  <div id="detailModal" class="hidden fixed inset-0 bg-black/80 backdrop-blur-sm z-[200] flex items-center justify-center p-4">
+    <div class="bg-bg-card border border-border-default rounded-2xl w-full max-w-5xl max-h-[90vh] overflow-y-auto">
+      <div class="sticky top-0 bg-bg-card border-b border-border-default p-4 flex items-center justify-between z-10">
+        <h3 id="detailTitle" class="text-lg font-bold text-text-primary">Analiz Detayı</h3>
+        <div class="flex items-center gap-2">
+          <button id="toggleLandmarks" class="px-3 py-1.5 rounded-lg text-xs font-medium bg-accent-primary/10 text-accent-primary hover:bg-accent-primary/20 transition-colors">
+            Noktaları Göster/Gizle
+          </button>
+          <button id="deleteFromDetail" class="px-3 py-1.5 rounded-lg text-xs font-medium bg-accent-red/10 text-accent-red hover:bg-accent-red/20 transition-colors">
+            Sil
+          </button>
+          <button id="closeDetail" class="p-2 rounded-lg hover:bg-bg-tertiary text-text-muted hover:text-text-primary transition-colors">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="p-6">
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <!-- Image with Canvas Overlay -->
+          <div class="relative">
+            <div id="imageContainer" class="relative rounded-xl overflow-hidden bg-bg-tertiary">
+              <img id="detailImage" src="" alt="Analiz" class="w-full" />
+              <canvas id="landmarkCanvas" class="absolute inset-0 w-full h-full" style="pointer-events:none;"></canvas>
+            </div>
+          </div>
+
+          <!-- Analysis Data -->
+          <div class="space-y-4">
+            <!-- Posture Score -->
+            <div id="postureSection" class="card">
+              <h4 class="text-sm font-semibold text-text-muted uppercase tracking-wider mb-3">Postür Skoru</h4>
+              <div class="flex items-center gap-4">
+                <div id="scoreCircle" class="w-20 h-20 rounded-full border-4 flex items-center justify-center">
+                  <span id="scoreValue" class="text-2xl font-bold"></span>
+                </div>
+                <div class="flex-1">
+                  <div class="h-3 bg-bg-tertiary rounded-full overflow-hidden mb-2">
+                    <div id="scoreBar" class="h-full rounded-full transition-all"></div>
+                  </div>
+                  <p id="scoreNotes" class="text-sm text-text-secondary"></p>
+                </div>
+              </div>
+            </div>
+
+            <!-- Joint Angles -->
+            <div id="anglesSection" class="hidden card">
+              <h4 class="text-sm font-semibold text-text-muted uppercase tracking-wider mb-3">Eklem Açıları</h4>
+              <div id="anglesList" class="grid grid-cols-2 gap-2"></div>
+            </div>
+
+            <!-- Muscle Density -->
+            <div id="muscleSection" class="hidden card">
+              <h4 class="text-sm font-semibold text-text-muted uppercase tracking-wider mb-3">Kas Yoğunluğu</h4>
+              <div id="muscleList" class="space-y-2"></div>
+            </div>
+
+            <!-- Info -->
+            <div class="card">
+              <h4 class="text-sm font-semibold text-text-muted uppercase tracking-wider mb-3">Bilgiler</h4>
+              <div id="infoList" class="space-y-2 text-sm"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Confirm Delete Modal -->
+  <div id="confirmDeleteModal" class="hidden fixed inset-0 bg-black/70 backdrop-blur-sm z-[300] flex items-center justify-center p-4">
+    <div class="bg-bg-card border border-border-default rounded-2xl p-6 w-full max-w-sm text-center">
+      <div class="w-14 h-14 rounded-full bg-accent-red/10 flex items-center justify-center mx-auto mb-4">
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-accent-red"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+      </div>
+      <h3 class="text-lg font-bold text-text-primary mb-2">Analizi Sil</h3>
+      <p class="text-sm text-text-secondary mb-6">Bu analiz ve görseli kalıcı olarak silinecek. Bu işlem geri alınamaz.</p>
+      <div class="flex gap-3">
+        <button id="cancelDelete" class="btn-secondary flex-1">İptal</button>
+        <button id="confirmDelete" class="flex-1 px-4 py-2.5 rounded-xl bg-accent-red text-white font-medium text-sm hover:bg-accent-red/90 transition-colors">Sil</button>
+      </div>
+    </div>
+  </div>
+
+  <script is:inline define:vars={{ userIsCoach, analysesJson }}>
+    const allAnalyses = JSON.parse(analysesJson);
+    let currentAnalysisId = null;
+    let deleteTargetId = null;
+    let showLandmarks = true;
+
+    // --- Landmark drawing ---
+    const SKELETON_CONNECTIONS = [
+      [11,12],[11,13],[13,15],[12,14],[14,16],
+      [11,23],[12,24],[23,24],[23,25],[24,26],
+      [25,27],[26,28],[27,29],[28,30],[29,31],[30,32],
+      [15,17],[15,19],[15,21],[16,18],[16,20],[16,22],
+      [0,1],[1,2],[2,3],[0,4],[4,5],[5,6],[7,8],[9,10]
+    ];
+
+    function drawLandmarks(canvas, landmarks) {
+      if (!canvas || !landmarks || !Array.isArray(landmarks) || landmarks.length === 0) return;
+      const ctx = canvas.getContext('2d');
+      const w = canvas.width;
+      const h = canvas.height;
+      ctx.clearRect(0, 0, w, h);
+
+      if (!showLandmarks) return;
+
+      // Draw skeleton connections
+      ctx.strokeStyle = 'rgba(0, 255, 128, 0.6)';
+      ctx.lineWidth = 2;
+      SKELETON_CONNECTIONS.forEach(([a, b]) => {
+        if (landmarks[a] && landmarks[b]) {
+          const la = landmarks[a], lb = landmarks[b];
+          if (la.visibility > 0.3 && lb.visibility > 0.3) {
+            ctx.beginPath();
+            ctx.moveTo(la.x * w, la.y * h);
+            ctx.lineTo(lb.x * w, lb.y * h);
+            ctx.stroke();
+          }
+        }
+      });
+
+      // Draw landmark points
+      landmarks.forEach((lm, i) => {
+        if (lm.visibility < 0.3) return;
+        const x = lm.x * w;
+        const y = lm.y * h;
+        
+        // Color by region
+        let color = '#00ff80'; // default green
+        if (i <= 10) color = '#60a5fa'; // face - blue
+        else if (i <= 22) color = '#f59e0b'; // arms - orange
+        else if (i <= 24) color = '#ef4444'; // hips - red
+        else color = '#8b5cf6'; // legs - purple
+
+        ctx.beginPath();
+        ctx.arc(x, y, 4, 0, Math.PI * 2);
+        ctx.fillStyle = color;
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+      });
+    }
+
+    // --- Upload ---
+    const uploadArea = document.getElementById('uploadArea');
+    const newAnalysisBtn = document.getElementById('newAnalysisBtn');
+    const emptyStateBtn = document.getElementById('emptyStateBtn');
+    const dropZone = document.getElementById('dropZone');
+    const fileInput = document.getElementById('fileInput');
+    const uploadStatus = document.getElementById('uploadStatus');
+    const studentSelect = document.getElementById('studentSelect');
+    const analysisTypeSelect = document.getElementById('analysisType');
+
+    function showUpload() { uploadArea.classList.toggle('hidden'); }
+    function showStatus(msg, err = false) {
+      uploadStatus.classList.remove('hidden');
+      uploadStatus.className = `mt-4 p-4 rounded-lg text-center text-sm font-medium ${err ? 'bg-accent-red/10 text-accent-red border border-accent-red/20' : 'bg-accent-green/10 text-accent-green border border-accent-green/20'}`;
+      uploadStatus.textContent = msg;
+    }
+
+    newAnalysisBtn?.addEventListener('click', showUpload);
+    emptyStateBtn?.addEventListener('click', showUpload);
+    dropZone?.addEventListener('click', () => fileInput?.click());
+
+    dropZone?.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('border-accent-primary', 'bg-accent-primary/5'); });
+    dropZone?.addEventListener('dragleave', () => { dropZone.classList.remove('border-accent-primary', 'bg-accent-primary/5'); });
+    dropZone?.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dropZone.classList.remove('border-accent-primary', 'bg-accent-primary/5');
+      const file = e.dataTransfer?.files[0];
+      if (file && file.type.startsWith('image/')) uploadFile(file);
+    });
+    fileInput?.addEventListener('change', (e) => { if (e.target.files[0]) uploadFile(e.target.files[0]); });
+
+    async function uploadFile(file) {
+      if (userIsCoach && studentSelect && !studentSelect.value) {
+        showStatus('Lütfen bir öğrenci seçin', true);
+        return;
+      }
+      const fd = new FormData();
+      fd.append('file', file);
+      fd.append('analysisType', analysisTypeSelect?.value || 'front');
+      if (userIsCoach && studentSelect?.value) fd.append('studentId', studentSelect.value);
+
+      showStatus('Yükleniyor ve analiz ediliyor...');
+      dropZone.style.opacity = '0.5';
+      dropZone.style.pointerEvents = 'none';
+
+      try {
+        const res = await fetch('/api/analysis/upload', { method: 'POST', body: fd });
+        if (res.ok) {
+          const result = await res.json();
+          const hasLandmarks = result.landmarks && Array.isArray(result.landmarks) && result.landmarks.length > 0;
+          showStatus(hasLandmarks ? `Analiz başarılı! ${result.landmarks.length} eklem noktası tespit edildi. Yenileniyor...` : 'Görsel kaydedildi. AI analizi yapılamadı (Python servisi aktif değil). Yenileniyor...');
+          setTimeout(() => window.location.reload(), 1500);
+        } else {
+          const data = await res.json();
+          showStatus(data.error || 'Yükleme başarısız', true);
+          dropZone.style.opacity = '1';
+          dropZone.style.pointerEvents = 'auto';
+        }
+      } catch (err) {
+        showStatus('Bir hata oluştu, tekrar deneyin', true);
+        dropZone.style.opacity = '1';
+        dropZone.style.pointerEvents = 'auto';
+      }
+    }
+
+    // --- Python service health check ---
+    (async () => {
+      const dot = document.getElementById('pythonDot');
+      const label = document.getElementById('pythonLabel');
+      try {
+        const r = await fetch('/api/analysis/health');
+        if (r.ok) {
+          dot.className = 'w-2 h-2 rounded-full bg-accent-green animate-pulse';
+          label.textContent = 'Python AI servisi aktif - eklem noktası tespiti yapılacak';
+          label.className = 'text-xs text-accent-green';
+        } else { throw new Error(); }
+      } catch {
+        dot.className = 'w-2 h-2 rounded-full bg-accent-orange';
+        label.textContent = 'Python AI servisi çevrimdışı - görsel kaydedilir ama eklem tespiti yapılamaz';
+        label.className = 'text-xs text-accent-orange';
+      }
+    })();
+
+    // --- Detail Modal ---
+    function openDetail(id) {
+      const a = allAnalyses.find(x => x.id === id);
+      if (!a) return;
+      currentAnalysisId = id;
+
+      document.getElementById('detailTitle').textContent = 
+        (a.userName ? a.userName + ' - ' : '') + 
+        (a.analysisType === 'front' ? 'Ön Görünüm' : a.analysisType === 'back' ? 'Arka Görünüm' : 'Yan Görünüm') +
+        ' (' + new Date(a.date).toLocaleDateString('tr-TR') + ')';
+
+      const img = document.getElementById('detailImage');
+      img.src = a.imageUrl;
+      img.onload = () => {
+        const canvas = document.getElementById('landmarkCanvas');
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        if (a.landmarks && Array.isArray(a.landmarks)) {
+          drawLandmarks(canvas, a.landmarks);
+        }
+      };
+
+      // Posture score
+      const ps = document.getElementById('postureSection');
+      if (a.postureScore != null) {
+        ps.classList.remove('hidden');
+        const color = a.postureScore >= 80 ? '#22c55e' : a.postureScore >= 60 ? '#eab308' : '#ef4444';
+        document.getElementById('scoreCircle').style.borderColor = color;
+        document.getElementById('scoreValue').textContent = Math.round(a.postureScore);
+        document.getElementById('scoreValue').style.color = color;
+        document.getElementById('scoreBar').style.width = Math.min(100, a.postureScore) + '%';
+        document.getElementById('scoreBar').style.backgroundColor = color;
+        document.getElementById('scoreNotes').textContent = a.postureNotes || '';
+      } else {
+        ps.classList.add('hidden');
+      }
+
+      // Angles
+      const angSec = document.getElementById('anglesSection');
+      const angList = document.getElementById('anglesList');
+      if (a.angles && Object.keys(a.angles).length > 0) {
+        angSec.classList.remove('hidden');
+        angList.innerHTML = Object.entries(a.angles).map(([k,v]) => 
+          `<div class="flex items-center justify-between p-2 rounded bg-bg-tertiary">
+            <span class="text-xs text-text-secondary">${k}</span>
+            <span class="text-xs font-bold text-text-primary">${v}°</span>
+          </div>`
+        ).join('');
+      } else {
+        angSec.classList.add('hidden');
+      }
+
+      // Muscle density
+      const musSec = document.getElementById('muscleSection');
+      const musList = document.getElementById('muscleList');
+      if (a.muscleDensity && Object.keys(a.muscleDensity).length > 0) {
+        musSec.classList.remove('hidden');
+        musList.innerHTML = Object.entries(a.muscleDensity).map(([k,v]) => {
+          const pct = (v / 10) * 100;
+          const color = v >= 7 ? '#22c55e' : v >= 4 ? '#eab308' : '#ef4444';
+          return `<div class="flex items-center gap-3">
+            <span class="text-xs text-text-secondary w-28 shrink-0">${k}</span>
+            <div class="flex-1 h-2 bg-bg-tertiary rounded-full overflow-hidden">
+              <div class="h-full rounded-full" style="width:${pct}%;background:${color}"></div>
+            </div>
+            <span class="text-xs font-bold w-6 text-right" style="color:${color}">${v}</span>
+          </div>`;
+        }).join('');
+      } else {
+        musSec.classList.add('hidden');
+      }
+
+      // Info
+      const infoList = document.getElementById('infoList');
+      const landmarks = a.landmarks && Array.isArray(a.landmarks) ? a.landmarks : [];
+      infoList.innerHTML = `
+        <div class="flex justify-between p-2 rounded bg-bg-tertiary"><span class="text-text-muted">Tarih</span><span class="text-text-primary font-medium">${new Date(a.date).toLocaleDateString('tr-TR')}</span></div>
+        <div class="flex justify-between p-2 rounded bg-bg-tertiary"><span class="text-text-muted">Tip</span><span class="text-text-primary font-medium">${a.analysisType === 'front' ? 'Ön' : a.analysisType === 'back' ? 'Arka' : 'Yan'} Görünüm</span></div>
+        <div class="flex justify-between p-2 rounded bg-bg-tertiary"><span class="text-text-muted">Eklem Noktası</span><span class="text-text-primary font-medium">${landmarks.length > 0 ? landmarks.length + ' nokta' : 'Tespit edilemedi'}</span></div>
+      `;
+
+      document.getElementById('detailModal').classList.remove('hidden');
+    }
+
+    document.querySelectorAll('.open-detail-btn').forEach(btn => {
+      btn.addEventListener('click', () => openDetail(btn.dataset.id));
+    });
+
+    document.getElementById('closeDetail').addEventListener('click', () => {
+      document.getElementById('detailModal').classList.add('hidden');
+    });
+
+    document.getElementById('toggleLandmarks').addEventListener('click', () => {
+      showLandmarks = !showLandmarks;
+      const a = allAnalyses.find(x => x.id === currentAnalysisId);
+      if (a) {
+        const canvas = document.getElementById('landmarkCanvas');
+        drawLandmarks(canvas, a.landmarks || []);
+      }
+    });
+
+    // --- Delete ---
+    document.querySelectorAll('.delete-analysis-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        deleteTargetId = btn.dataset.id;
+        document.getElementById('confirmDeleteModal').classList.remove('hidden');
+      });
+    });
+
+    document.getElementById('deleteFromDetail')?.addEventListener('click', () => {
+      deleteTargetId = currentAnalysisId;
+      document.getElementById('confirmDeleteModal').classList.remove('hidden');
+    });
+
+    document.getElementById('cancelDelete').addEventListener('click', () => {
+      document.getElementById('confirmDeleteModal').classList.add('hidden');
+      deleteTargetId = null;
+    });
+
+    document.getElementById('confirmDelete').addEventListener('click', async () => {
+      if (!deleteTargetId) return;
+      const btn = document.getElementById('confirmDelete');
+      btn.textContent = 'Siliniyor...';
+      btn.disabled = true;
+
+      try {
+        const res = await fetch(`/api/analysis/${deleteTargetId}`, { method: 'DELETE' });
+        if (res.ok) {
+          // Remove card from DOM
+          const card = document.querySelector(`.analysis-card[data-id="${deleteTargetId}"]`);
+          if (card) card.remove();
+          document.getElementById('confirmDeleteModal').classList.add('hidden');
+          document.getElementById('detailModal').classList.add('hidden');
+          
+          // Check if grid is empty
+          const remaining = document.querySelectorAll('.analysis-card');
+          if (remaining.length === 0) window.location.reload();
+        } else {
+          alert('Silme işlemi başarısız');
+        }
+      } catch {
+        alert('Bir hata oluştu');
+      }
+      btn.textContent = 'Sil';
+      btn.disabled = false;
+      deleteTargetId = null;
+    });
+
+    // Close modals on backdrop click
+    document.getElementById('detailModal').addEventListener('click', (e) => {
+      if (e.target === e.currentTarget) document.getElementById('detailModal').classList.add('hidden');
+    });
+    document.getElementById('confirmDeleteModal').addEventListener('click', (e) => {
+      if (e.target === e.currentTarget) { document.getElementById('confirmDeleteModal').classList.add('hidden'); deleteTargetId = null; }
+    });
+  </script>
+</MainLayout>

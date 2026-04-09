@@ -1,0 +1,572 @@
+---
+import { getUserFromRequest, isBackofficeUser } from '../lib/auth';
+import { calculateDiscountedAmount, getGlobalCoachSubscriptionDiscount } from '../lib/pricing';
+import BorderGlow from '../components/BorderGlow';
+import ShapeGrid from '../components/ShapeGrid';
+
+const COACH_SUBSCRIPTION_PRICE_TRY = 299;
+
+const user = await getUserFromRequest(Astro.request);
+const globalCoachDiscount = await getGlobalCoachSubscriptionDiscount();
+const coachPricing = calculateDiscountedAmount(
+  COACH_SUBSCRIPTION_PRICE_TRY,
+  globalCoachDiscount.enabled ? globalCoachDiscount.amount : 0,
+);
+
+// Giriş yapmışsa dashboard'a yönlendir
+if (user) {
+  if (isBackofficeUser(user)) {
+    return Astro.redirect('/admin');
+  }
+  return Astro.redirect('/dashboard');
+}
+---
+
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="CoachPro - Kişisel antrenörler için müşteri takip ve vücut analizi platformu" />
+  <title>CoachPro - Fitness Koçluk Platformu</title>
+  <link rel="stylesheet" href="/src/styles/global.css" />
+</head>
+<body class="min-h-screen relative bg-white" style="background-color: #ffffff;">
+  <!-- Subtle ShapeGrid Background -->
+  <div class="fixed inset-0 z-0 bg-white pointer-events-none opacity-10">
+    <ShapeGrid
+      client:load
+      speed={0}
+      squareSize={52}
+      direction="diagonal"
+      borderColor="rgba(148, 163, 184, 1.8)"
+      hoverFillColor="transparent"
+      shape="square"
+      vignetteColor="transparent"
+    />
+  </div>
+
+  <!-- Header -->
+  <header class="fixed top-0 inset-x-0 z-50 bg-transparent ">
+    <div class="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
+      <a href="/" class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-xl bg-linear-to-br from-red-600 to-red-800 flex items-center justify-center text-white font-bold">
+          CP
+        </div>
+        <span class="text-xl font-bold text-gray-900">CoachPro</span>
+      </a>
+      <div class="flex items-center gap-4">
+        <a href="/auth/login" class="text-sm font-medium text-gray-600 hover:text-gray-900 transition-colors">Giriş Yap</a>
+        <a href="/auth/register" class="btn-primary">Ücretsiz Başla</a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Hero Section -->
+  <section class="pt-32 pb-20 px-6 relative z-10">
+    <div class="max-w-7xl mx-auto text-center">
+      <div class="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-accent-primary/10 border border-accent-primary/20 text-accent-primary text-sm font-medium mb-8">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/></svg>
+        Türkiye'nin #1 Fitness Koçluk Platformu
+      </div>
+      
+      <h1 class="text-4xl sm:text-5xl lg:text-6xl font-bold text-gray-900 mb-6 leading-tight">
+        Öğrencilerinizi 
+        <span class="relative inline-block whitespace-nowrap">
+          <span class="relative z-10 text-red-500">Profesyonelce</span>
+          <svg class="absolute -bottom-2 left-0 w-full h-3 sm:h-4 -rotate-1 text-red-500" viewBox="0 0 100 20" preserveAspectRatio="none" aria-hidden="true">
+            <path d="M 2,12 Q 25,26 99,5" stroke="currentColor" stroke-width="7" stroke-linecap="round" fill="none" />
+          </svg>
+        </span> 
+        Yönetin
+      </h1>
+      
+      <p class="text-lg text-gray-600 max-w-2xl mx-auto mb-10">
+        Antrenman programları, diyet planları, vücut analizi ve gelişim takibi - tüm koçluk araçlarınız tek platformda.
+      </p>
+      
+      <div class="flex flex-col sm:flex-row items-center justify-center gap-4 mb-16">
+        <a href="/auth/register" class="btn-primary text-base px-8 py-4">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg>
+          Eğitmen Olarak Başla
+        </a>
+        <a href="/auth/register" class="inline-flex items-center gap-2 px-8 py-4 rounded-lg font-semibold text-base bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 transition-all">
+          Öğrenci Olarak Katıl
+        </a>
+      </div>
+
+      <!-- Stats Banner -->
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-6 max-w-4xl mx-auto">
+        <div class="text-center">
+          <div class="text-3xl sm:text-4xl font-bold text-gray-900">500+</div>
+          <div class="text-sm text-gray-500 mt-1">Aktif Eğitmen</div>
+        </div>
+        <div class="text-center">
+          <div class="text-3xl sm:text-4xl font-bold text-gray-900">10K+</div>
+          <div class="text-sm text-gray-500 mt-1">Öğrenci</div>
+        </div>
+        <div class="text-center">
+          <div class="text-3xl sm:text-4xl font-bold text-gray-900">50K+</div>
+          <div class="text-sm text-gray-500 mt-1">Oluşturulan Program</div>
+        </div>
+        <div class="text-center">
+          <div class="text-3xl sm:text-4xl font-bold text-gray-900">%98</div>
+          <div class="text-sm text-gray-500 mt-1">Memnuniyet</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- How It Works Section -->
+  <section class="py-20 px-6 relative z-10">
+    <div class="max-w-7xl mx-auto">
+      <div class="text-center mb-16">
+        <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-red-50 border border-red-200 text-red-600 text-xs font-medium mb-4">NASIL ÇALIŞIR?</div>
+        <h2 class="text-4xl font-bold text-gray-900 mb-4">3 Adımda Başlayın</h2>
+        <p class="text-gray-600 max-w-xl mx-auto">Platformumuza katılmak ve koçluk hizmetinizi dijitalleştirmek çok kolay</p>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
+        <!-- Step 1 -->
+        <div class="relative text-center p-8">
+          <div class="w-16 h-16 rounded-2xl bg-red-50 border-2 border-red-200 flex items-center justify-center mx-auto mb-6">
+            <span class="text-2xl font-bold text-red-500">1</span>
+          </div>
+          <h3 class="text-xl font-bold text-gray-900 mb-3">Hesap Oluşturun</h3>
+          <p class="text-gray-600 text-sm leading-relaxed">Eğitmen veya öğrenci olarak ücretsiz kayıt olun. Eğitmenler otomatik referans kodu alır.</p>
+          <div class="hidden md:block absolute top-16 right-0 translate-x-1/2 text-gray-300">
+            <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+          </div>
+        </div>
+
+        <!-- Step 2 -->
+        <div class="relative text-center p-8">
+          <div class="w-16 h-16 rounded-2xl bg-red-50 border-2 border-red-200 flex items-center justify-center mx-auto mb-6">
+            <span class="text-2xl font-bold text-red-500">2</span>
+          </div>
+          <h3 class="text-xl font-bold text-gray-900 mb-3">Öğrencilerinizi Ekleyin</h3>
+          <p class="text-gray-600 text-sm leading-relaxed">Referans kodunuzu paylaşın, öğrenciler kodu girerek sizinle eşleşsin. Anında yönetmeye başlayın.</p>
+          <div class="hidden md:block absolute top-16 right-0 translate-x-1/2 text-gray-300">
+            <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+          </div>
+        </div>
+
+        <!-- Step 3 -->
+        <div class="text-center p-8">
+          <div class="w-16 h-16 rounded-2xl bg-red-50 border-2 border-red-200 flex items-center justify-center mx-auto mb-6">
+            <span class="text-2xl font-bold text-red-500">3</span>
+          </div>
+          <h3 class="text-xl font-bold text-gray-900 mb-3">Program Oluşturun</h3>
+          <p class="text-gray-600 text-sm leading-relaxed">Antrenman ve diyet programları hazırlayın, öğrencilerinize atayın. Gelişimlerini takip edin.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Features Section -->
+  <section class="py-20 px-6 relative z-10">
+    <div class="max-w-7xl mx-auto">
+      <div class="text-center mb-16">
+        <h2 class="text-4xl font-bold text-gray-900 mb-4">Teknik Detaylar Güçlü Özellikler</h2>
+        <p class="text-gray-600 max-w-xl mx-auto">Koçluk işinizi büyütmek için ihtiyacınız olan her şey</p>
+      </div>
+      
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <BorderGlow client:load edgeSensitivity={30} glowColor="142 70 50" backgroundColor="#ffffff1f" borderRadius={16} glowRadius={40} glowIntensity={0.8} coneSpread={25} colors={['#10b981', '#34d399', '#3fdf9f']}>
+          <div class="p-6">
+            <div class="w-12 h-12 rounded-xl bg-green-100 flex items-center justify-center mb-4">
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-green-600"><path d="m6.5 6.5 11 11"/><path d="m21 21-1-1"/><path d="m3 3 1 1"/><path d="m18 22 4-4"/><path d="m2 6 4-4"/><path d="m3 10 7-7"/><path d="m14 21 7-7"/></svg>
+            </div>
+            <h3 class="text-lg font-semibold text-gray-900 mb-2">Antrenman Programları</h3>
+            <p class="text-gray-600 text-sm">Kişiselleştirilmiş antrenman programları oluşturun ve öğrencilerinize atayın.</p>
+          </div>
+        </BorderGlow>
+        
+        
+        <BorderGlow client:load edgeSensitivity={30} glowColor="187 80 55" backgroundColor="#ffffff1f" borderRadius={16} glowRadius={40} glowIntensity={0.8} coneSpread={25} colors={['#06b6d4', '#22d3ee', '#67e8f9']}>
+          <div class="p-6">
+            <div class="w-12 h-12 rounded-xl bg-cyan-100 flex items-center justify-center mb-4">
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-cyan-600"><path d="M18 8h1a4 4 0 0 1 0 8h-1"/><path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z"/><line x1="6" y1="1" x2="6" y2="4"/><line x1="10" y1="1" x2="10" y2="4"/><line x1="14" y1="1" x2="14" y2="4"/></svg>
+            </div>
+            <h3 class="text-lg font-semibold text-gray-900 mb-2">Diyet Planları</h3>
+            <p class="text-gray-600 text-sm">Makro hedefli beslenme programları hazırlayın ve takip edin.</p>
+          </div>
+        </BorderGlow>
+        
+        <BorderGlow client:load edgeSensitivity={30} glowColor="270 70 60" backgroundColor="#ffffff1f" borderRadius={16} glowRadius={40} glowIntensity={0.8} coneSpread={25} colors={['#8b5cf6', '#a78bfa', '#c4b5fd']}>
+          <div class="p-6">
+            <div class="w-12 h-12 rounded-xl bg-red-100 flex items-center justify-center mb-4">
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-red-600"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4Z"/></svg>
+            </div>
+            <h3 class="text-lg font-semibold text-gray-900 mb-2">AI Vücut Analizi</h3>
+            <p class="text-gray-600 text-sm">MediaPipe ile 33 eklem noktası analizi ve postür değerlendirmesi.</p>
+          </div>
+        </BorderGlow>
+        
+        <BorderGlow client:load edgeSensitivity={30} glowColor="25 85 55" backgroundColor="#ffffff1f" borderRadius={16} glowRadius={40} glowIntensity={0.8} coneSpread={25} colors={['#f97316', '#fb923c', '#fdba74']}>
+          <div class="p-6">
+            <div class="w-12 h-12 rounded-xl bg-orange-100 flex items-center justify-center mb-4">
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-orange-600"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
+            </div>
+            <h3 class="text-lg font-semibold text-gray-900 mb-2">Gelişim Takibi</h3>
+            <p class="text-gray-600 text-sm">Kilo, ölçüm ve fotoğraf karşılaştırmaları ile ilerlemeyi görselleştirin.</p>
+          </div>
+        </BorderGlow>
+        
+        <BorderGlow client:load edgeSensitivity={30} glowColor="239 70 60" backgroundColor="#ffffff1f" borderRadius={16} glowRadius={40} glowIntensity={0.8} coneSpread={25} colors={['#6366f1', '#818cf8', '#a5b4fc']}>
+          <div class="p-6">
+            <div class="w-12 h-12 rounded-xl bg-red-100 flex items-center justify-center mb-4">
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-red-600"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+            </div>
+            <h3 class="text-lg font-semibold text-gray-900 mb-2">Öğrenci Yönetimi</h3>
+            <p class="text-gray-600 text-sm">Referans kodu ile kolay öğrenci ekleme ve merkezi yönetim.</p>
+          </div>
+        </BorderGlow>
+        
+        <BorderGlow client:load edgeSensitivity={30} glowColor="0 75 55" backgroundColor="#ffffff1f" borderRadius={16} glowRadius={40} glowIntensity={0.8} coneSpread={25} colors={['#ef4444', '#f87171', '#fca5a5']}>
+          <div class="p-6">
+            <div class="w-12 h-12 rounded-xl bg-red-100 flex items-center justify-center mb-4">
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-red-600"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10"/><path d="m9 12 2 2 4-4"/></svg>
+            </div>
+            <h3 class="text-lg font-semibold text-gray-900 mb-2">Güvenli Platform</h3>
+            <p class="text-gray-600 text-sm">SSL şifreleme ve güvenli veri saklama ile verileriniz güvende.</p>
+          </div>
+        </BorderGlow>
+      </div>
+    </div>
+  </section>
+
+  <!-- For Coaches & Students Section -->
+  <section class="py-20 px-6 relative z-10">
+    <div class="max-w-7xl mx-auto">
+      <div class="text-center mb-16">
+        <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-red-50 border border-red-200 text-red-600 text-xs font-medium mb-4">KİMLER İÇİN?</div>
+        <h2 class="text-4xl font-bold text-gray-900 mb-4">Eğitmenler ve Öğrenciler İçin</h2>
+        <p class="text-gray-600 max-w-xl mx-auto">Her iki taraf için de özel tasarlanmış araçlar</p>
+      </div>
+
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        <!-- For Coaches -->
+        <div class="bg-white/80 backdrop-blur-sm rounded-2xl border border-gray-200 p-8 hover:shadow-lg transition-all">
+          <div class="flex items-center gap-3 mb-6">
+            <div class="w-12 h-12 rounded-xl bg-red-100 flex items-center justify-center">
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-red-600"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+            </div>
+            <h3 class="text-2xl font-bold text-gray-900">Eğitmenler İçin</h3>
+          </div>
+          <ul class="space-y-4">
+            <li class="flex items-start gap-3">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-red-500 shrink-0 mt-0.5"><polyline points="20 6 9 17 4 12"/></svg>
+              <div>
+                <span class="font-semibold text-gray-900">Öğrenci Yönetim Paneli</span>
+                <p class="text-gray-500 text-sm mt-0.5">Tüm öğrencilerinizi tek panelden yönetin, ilerlemelerini takip edin</p>
+              </div>
+            </li>
+            <li class="flex items-start gap-3">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-red-500 shrink-0 mt-0.5"><polyline points="20 6 9 17 4 12"/></svg>
+              <div>
+                <span class="font-semibold text-gray-900">Program & Diyet Oluşturucu</span>
+                <p class="text-gray-500 text-sm mt-0.5">Haftalık antrenman programları ve makro hedefli diyet planları hazırlayın</p>
+              </div>
+            </li>
+            <li class="flex items-start gap-3">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-red-500 shrink-0 mt-0.5"><polyline points="20 6 9 17 4 12"/></svg>
+              <div>
+                <span class="font-semibold text-gray-900">Referans Kodu Sistemi</span>
+                <p class="text-gray-500 text-sm mt-0.5">Benzersiz kodunuzu paylaşın, öğrenciler anında size bağlansın</p>
+              </div>
+            </li>
+            <li class="flex items-start gap-3">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-red-500 shrink-0 mt-0.5"><polyline points="20 6 9 17 4 12"/></svg>
+              <div>
+                <span class="font-semibold text-gray-900">AI Vücut Analizi</span>
+                <p class="text-gray-500 text-sm mt-0.5">MediaPipe ile 33 eklem noktası analizi ve otomatik postür değerlendirmesi</p>
+              </div>
+            </li>
+          </ul>
+        </div>
+
+        <!-- For Students -->
+        <div class="bg-white/80 backdrop-blur-sm rounded-2xl border border-gray-200 p-8 hover:shadow-lg transition-all">
+          <div class="flex items-center gap-3 mb-6">
+            <div class="w-12 h-12 rounded-xl bg-cyan-100 flex items-center justify-center">
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-cyan-600"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+            </div>
+            <h3 class="text-2xl font-bold text-gray-900">Öğrenciler İçin</h3>
+          </div>
+          <ul class="space-y-4">
+            <li class="flex items-start gap-3">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-cyan-500 shrink-0 mt-0.5"><polyline points="20 6 9 17 4 12"/></svg>
+              <div>
+                <span class="font-semibold text-gray-900">Kişisel Antrenman Programı</span>
+                <p class="text-gray-500 text-sm mt-0.5">Eğitmeninizin size özel hazırladığı programlara anında erişin</p>
+              </div>
+            </li>
+            <li class="flex items-start gap-3">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-cyan-500 shrink-0 mt-0.5"><polyline points="20 6 9 17 4 12"/></svg>
+              <div>
+                <span class="font-semibold text-gray-900">Beslenme Planı Takibi</span>
+                <p class="text-gray-500 text-sm mt-0.5">Günlük kalori ve makro hedeflerinizi görün, öğünlerinizi planlayın</p>
+              </div>
+            </li>
+            <li class="flex items-start gap-3">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-cyan-500 shrink-0 mt-0.5"><polyline points="20 6 9 17 4 12"/></svg>
+              <div>
+                <span class="font-semibold text-gray-900">Gelişim Grafikleri</span>
+                <p class="text-gray-500 text-sm mt-0.5">Kilo, ölçüm ve fotoğraf karşılaştırmalarıyla ilerlemenizi görün</p>
+              </div>
+            </li>
+            <li class="flex items-start gap-3">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-cyan-500 shrink-0 mt-0.5"><polyline points="20 6 9 17 4 12"/></svg>
+              <div>
+                <span class="font-semibold text-gray-900">Vücut Analizi Raporları</span>
+                <p class="text-gray-500 text-sm mt-0.5">AI destekli postür analizi sonuçlarınızı detaylı inceleyin</p>
+              </div>
+            </li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- AI Body Analysis Showcase -->
+  <section class="py-20 px-6 relative z-10">
+    <div class="max-w-7xl mx-auto">
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
+        <div>
+          <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-red-50 border border-red-200 text-red-600 text-xs font-medium mb-4">YENİ TEKNOLOJİ</div>
+          <h2 class="text-4xl font-bold text-gray-900 mb-6">AI Destekli Vücut Analizi</h2>
+          <p class="text-gray-600 mb-8 leading-relaxed">Google MediaPipe teknolojisiyle öğrencilerinizin fotoğraflarını analiz edin. 33 eklem noktası tespiti, postür değerlendirmesi ve vücut oranları hesaplaması otomatik olarak yapılır.</p>
+          
+          <div class="space-y-4">
+            <div class="flex items-center gap-4">
+              <div class="w-10 h-10 rounded-lg bg-red-100 flex items-center justify-center shrink-0">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-red-600"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+              </div>
+              <div>
+                <span class="font-semibold text-gray-900">33 Eklem Noktası Tespiti</span>
+                <p class="text-gray-500 text-sm">Yüksek hassasiyetli iskelet haritalama</p>
+              </div>
+            </div>
+            <div class="flex items-center gap-4">
+              <div class="w-10 h-10 rounded-lg bg-red-100 flex items-center justify-center shrink-0">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-red-600"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg>
+              </div>
+              <div>
+                <span class="font-semibold text-gray-900">Fotoğraf Karşılaştırma</span>
+                <p class="text-gray-500 text-sm">Öncesi-sonrası görsel ilerleme takibi</p>
+              </div>
+            </div>
+            <div class="flex items-center gap-4">
+              <div class="w-10 h-10 rounded-lg bg-red-100 flex items-center justify-center shrink-0">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-red-600"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
+              </div>
+              <div>
+                <span class="font-semibold text-gray-900">Otomatik Raporlama</span>
+                <p class="text-gray-500 text-sm">Analiz sonuçları anında PDF olarak dışa aktarılabilir</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Visual Placeholder -->
+        <div class="bg-linear-to-br from-red-50 to-red-50 rounded-2xl border border-red-200/50 p-8 flex flex-col items-center justify-center min-h-100">
+          <div class="w-24 h-24 rounded-full bg-red-100 flex items-center justify-center mb-6">
+            <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="text-red-500"><path d="M17 18a2 2 0 0 0-2-2H9a2 2 0 0 0-2 2"/><rect width="18" height="18" x="3" y="4" rx="2"/><circle cx="12" cy="10" r="2"/><line x1="8" y1="2" x2="8" y2="4"/><line x1="16" y1="2" x2="16" y2="4"/></svg>
+          </div>
+          <div class="text-center">
+            <h4 class="text-lg font-bold text-gray-900 mb-2">Akıllı Analiz Motoru</h4>
+            <p class="text-gray-500 text-sm max-w-xs">Fotoğraf yükleyin, AI otomatik olarak eklem noktalarını tespit etsin ve postür analizi yapsın</p>
+          </div>
+          <div class="mt-6 flex gap-3">
+            <div class="px-3 py-1.5 rounded-full bg-red-100 text-red-700 text-xs font-medium">MediaPipe</div>
+            <div class="px-3 py-1.5 rounded-full bg-red-100 text-red-700 text-xs font-medium">TensorFlow</div>
+            <div class="px-3 py-1.5 rounded-full bg-violet-100 text-violet-700 text-xs font-medium">Computer Vision</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- FAQ Section -->
+  <section class="py-20 px-6 relative z-10">
+    <div class="max-w-3xl mx-auto">
+      <div class="text-center mb-16">
+        <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-red-50 border border-red-200 text-red-600 text-xs font-medium mb-4">SSS</div>
+        <h2 class="text-4xl font-bold text-gray-900 mb-4">Sıkça Sorulan Sorular</h2>
+      </div>
+
+      <div class="space-y-4">
+        <details class="group bg-white/80 backdrop-blur-sm rounded-xl border border-gray-200 overflow-hidden">
+          <summary class="flex items-center justify-between p-6 cursor-pointer hover:bg-gray-50 transition-colors">
+            <span class="font-semibold text-gray-900">CoachPro nedir ve kimler için?</span>
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-gray-400 group-open:rotate-180 transition-transform"><path d="m6 9 6 6 6-6"/></svg>
+          </summary>
+          <div class="px-6 pb-6 text-gray-600 text-sm leading-relaxed">
+            CoachPro, kişisel antrenörler (eğitmenler) ve öğrencileri için tasarlanmış bir fitness koçluk platformudur. Eğitmenler antrenman programları ve diyet planları oluşturabilir, öğrencilerini yönetebilir ve AI destekli vücut analizi yapabilir. Öğrenciler ise eğitmenlerinin hazırladığı programlara erişebilir ve gelişimlerini takip edebilir.
+          </div>
+        </details>
+
+        <details class="group bg-white/80 backdrop-blur-sm rounded-xl border border-gray-200 overflow-hidden">
+          <summary class="flex items-center justify-between p-6 cursor-pointer hover:bg-gray-50 transition-colors">
+            <span class="font-semibold text-gray-900">Referans kodu sistemi nasıl çalışır?</span>
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-gray-400 group-open:rotate-180 transition-transform"><path d="m6 9 6 6 6-6"/></svg>
+          </summary>
+          <div class="px-6 pb-6 text-gray-600 text-sm leading-relaxed">
+            Her eğitmen hesap oluşturduğunda benzersiz bir referans kodu alır. Öğrenciler kayıt olurken bu kodu girerek eğitmenleriyle otomatik eşleşir. Böylece eğitmen anında öğrencisini görüp program atamaya başlayabilir.
+          </div>
+        </details>
+
+        <details class="group bg-white/80 backdrop-blur-sm rounded-xl border border-gray-200 overflow-hidden">
+          <summary class="flex items-center justify-between p-6 cursor-pointer hover:bg-gray-50 transition-colors">
+            <span class="font-semibold text-gray-900">AI vücut analizi nasıl yapılıyor?</span>
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-gray-400 group-open:rotate-180 transition-transform"><path d="m6 9 6 6 6-6"/></svg>
+          </summary>
+          <div class="px-6 pb-6 text-gray-600 text-sm leading-relaxed">
+            Google MediaPipe teknolojisini kullanarak yüklediğiniz fotoğraflar üzerinde 33 eklem noktası tespit edilir. Bu noktalar kullanılarak postür değerlendirmesi, vücut oranları hesaplaması ve duruş analizi otomatik olarak yapılır. Sonuçlar görsel olarak sunulur.
+          </div>
+        </details>
+
+        <details class="group bg-white/80 backdrop-blur-sm rounded-xl border border-gray-200 overflow-hidden">
+          <summary class="flex items-center justify-between p-6 cursor-pointer hover:bg-gray-50 transition-colors">
+            <span class="font-semibold text-gray-900">Öğrenciler için ücret var mı?</span>
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-gray-400 group-open:rotate-180 transition-transform"><path d="m6 9 6 6 6-6"/></svg>
+          </summary>
+          <div class="px-6 pb-6 text-gray-600 text-sm leading-relaxed">
+            Hayır! Öğrenciler tamamen ücretsiz olarak platforma katılabilir. Eğitmenlerinin programlarına erişim, diyet planlarını görüntüleme ve gelişim takibi gibi tüm özellikler öğrenciler için ücretsizdir.
+          </div>
+        </details>
+
+        <details class="group bg-white/80 backdrop-blur-sm rounded-xl border border-gray-200 overflow-hidden">
+          <summary class="flex items-center justify-between p-6 cursor-pointer hover:bg-gray-50 transition-colors">
+            <span class="font-semibold text-gray-900">Kaç öğrenci ekleyebilirim?</span>
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-gray-400 group-open:rotate-180 transition-transform"><path d="m6 9 6 6 6-6"/></svg>
+          </summary>
+          <div class="px-6 pb-6 text-gray-600 text-sm leading-relaxed">
+            Eğitmen planında sınırsız öğrenci ekleyebilirsiniz. Tüm öğrencilerinize ayrı ayrı program ve diyet planı atayabilir, her birinin gelişimini ayrıntılı takip edebilirsiniz.
+          </div>
+        </details>
+      </div>
+    </div>
+  </section>
+
+  <!-- CTA Section -->
+  <section class="py-20 px-6 relative z-10">
+    <div class="max-w-4xl mx-auto text-center">
+      <div class="bg-linear-to-br from-gray-900 to-gray-800 rounded-3xl p-12 md:p-16 relative overflow-hidden">
+        <div class="absolute inset-0 bg-[radial-gradient(circle_at_30%_50%,rgba(239,68,68,0.15),transparent_60%)]"></div>
+        <div class="relative z-10">
+          <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">Koçluk Kariyerinizi Dijitalleştirin</h2>
+          <p class="text-gray-400 max-w-lg mx-auto mb-8">Binlerce eğitmen CoachPro ile öğrencilerini yönetiyor. Siz de hemen başlayın, ilk ay ücretsiz deneyin.</p>
+          <div class="flex flex-col sm:flex-row items-center justify-center gap-4">
+            <a href="/auth/register" class="inline-flex items-center gap-2 px-8 py-4 rounded-lg font-semibold text-base bg-red-600 text-white  transition-all">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+              Hemen Başla
+            </a>
+            <a href="#pricing" class="inline-flex items-center gap-2 px-8 py-4 rounded-lg font-semibold text-base bg-white/10 text-white border border-white/20 hover:bg-white/20 transition-all">
+              Fiyatları İncele
+            </a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Pricing Section -->
+  <section id="pricing" class="py-20 px-6 relative z-10">
+    <div class="max-w-7xl mx-auto">
+      <div class="text-center mb-16">
+        <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-red-50 border border-red-200 text-red-600 text-xs font-medium mb-4">FİYATLANDIRMA</div>
+        <h2 class="text-4xl font-bold text-gray-900 mb-4">Basit Fiyatlandırma</h2>
+        <p class="text-gray-600">Öğrenciler için ücretsiz, eğitmenler için uygun fiyat</p>
+      </div>
+      
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-4xl mx-auto">
+        <!-- Student Plan -->
+        <div class="bg-white rounded-2xl border border-gray-200 p-8 shadow-sm hover:shadow-lg transition-shadow">
+          <div class="text-center mb-6">
+            <h3 class="text-xl font-bold text-gray-900 mb-2">Öğrenci</h3>
+            <div class="text-4xl font-bold text-cyan-600">Ücretsiz</div>
+          </div>
+          <ul class="space-y-3 mb-8">
+            <li class="flex items-center gap-3 text-gray-600">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-green-500 shrink-0"><polyline points="20 6 9 17 4 12"/></svg>
+              Eğitmenin programlarına erişim
+            </li>
+            <li class="flex items-center gap-3 text-gray-600">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-green-500 shrink-0"><polyline points="20 6 9 17 4 12"/></svg>
+              Diyet planlarını görüntüleme
+            </li>
+            <li class="flex items-center gap-3 text-gray-600">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-green-500 shrink-0"><polyline points="20 6 9 17 4 12"/></svg>
+              Gelişim takibi
+            </li>
+          </ul>
+          <a href="/auth/register" class="inline-flex items-center justify-center w-full px-6 py-3 rounded-lg font-semibold bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 transition-all">Öğrenci Ol</a>
+        </div>
+        
+        <!-- Coach Plan -->
+        <div class="bg-white rounded-2xl border-2 border-red-500 p-8 shadow-lg relative">
+          <div class="absolute -top-3 left-1/2 -translate-x-1/2 px-4 py-1 bg-red-500 text-white text-xs font-bold rounded-full">
+            EN POPÜLER
+          </div>
+          <div class="text-center mb-6">
+            <h3 class="text-xl font-bold text-gray-900 mb-2">Eğitmen</h3>
+            {coachPricing.discountAmount > 0 ? (
+              <div>
+                <div class="text-sm text-gray-400 line-through">₺{coachPricing.baseAmount}/ay</div>
+                <div class="text-4xl font-bold text-red-600">₺{coachPricing.finalAmount}<span class="text-lg font-normal text-gray-500">/ay</span></div>
+                <div class="mt-2 inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold bg-green-100 text-green-700">
+                  Admin indirimi aktif: -₺{coachPricing.discountAmount}
+                </div>
+              </div>
+            ) : (
+              <div class="text-4xl font-bold text-red-600">₺{coachPricing.finalAmount}<span class="text-lg font-normal text-gray-500">/ay</span></div>
+            )}
+          </div>
+          <ul class="space-y-3 mb-8">
+            <li class="flex items-center gap-3 text-gray-600">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-green-500 shrink-0"><polyline points="20 6 9 17 4 12"/></svg>
+              Sınırsız öğrenci
+            </li>
+            <li class="flex items-center gap-3 text-gray-600">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-green-500 shrink-0"><polyline points="20 6 9 17 4 12"/></svg>
+              Program ve diyet oluşturma
+            </li>
+            <li class="flex items-center gap-3 text-gray-600">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-green-500 shrink-0"><polyline points="20 6 9 17 4 12"/></svg>
+              AI vücut analizi
+            </li>
+            <li class="flex items-center gap-3 text-gray-600">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-green-500 shrink-0"><polyline points="20 6 9 17 4 12"/></svg>
+              Referans kodu sistemi
+            </li>
+            <li class="flex items-center gap-3 text-gray-600">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-green-500 shrink-0"><polyline points="20 6 9 17 4 12"/></svg>
+              Öncelikli destek
+            </li>
+          </ul>
+          <a href="/auth/register" class="btn-primary w-full justify-center">Eğitmen Ol</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+    <!-- Footer -->
+    <footer class="py-12 px-6  bg-transparent relative z-10">
+      <div class="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
+        <div class="flex items-center gap-3">
+          <div class="w-8 h-8 rounded-lg bg-linear-to-br from-red-500 to-red-500 flex items-center justify-center text-white text-sm font-bold">
+            CP
+          </div>
+          <span class="text-gray-500 text-sm">© 2024 CoachPro. Tüm hakları saklıdır.</span>
+        </div>
+        <div class="flex items-center gap-6 text-sm text-gray-500">
+          <a href="#" class="hover:text-gray-900 transition-colors">Gizlilik</a>
+          <a href="#" class="hover:text-gray-900 transition-colors">Kullanım Şartları</a>
+          <a href="#" class="hover:text-gray-900 transition-colors">İletişim</a>
+        </div>
+      </div>
+    </footer>
+</body>
+</html>
+

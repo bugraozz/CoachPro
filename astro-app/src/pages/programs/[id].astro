@@ -1,0 +1,149 @@
+﻿---
+import MainLayout from '../../layouts/MainLayout.astro';
+import prisma from '../../lib/prisma';
+import { getUserFromRequest, isCoach } from '../../lib/auth';
+
+const user = await getUserFromRequest(Astro.request);
+if (!user) {
+  return Astro.redirect('/auth/login');
+}
+
+const { id } = Astro.params;
+
+const program = await prisma.program.findUnique({
+  where: { id },
+  include: {
+    user: { select: { id: true, name: true, coachId: true } },
+    days: {
+      include: { exercises: { orderBy: { order: 'asc' } } },
+      orderBy: { order: 'asc' },
+    },
+  },
+});
+
+if (!program) {
+  return new Response('Program bulunamadı', { status: 404 });
+}
+
+// Güvenlik kontrolü (kendisi ya da eğitimeni görebilir)
+const authorized = program.userId === user.id || (isCoach(user) && program.user.coachId === user.id);
+if (!authorized) {
+  return new Response('Yetkisiz', { status: 403 });
+}
+---
+
+<MainLayout title={program.name + ' - Program Detayı'} activePage="programs">
+  <div class="px-6 lg:px-8 py-8">
+    <div class="max-w-4xl mx-auto space-y-6 animate-fadeIn">
+      {/* BAŞLIK VE GERİ BUTONU */}
+      <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-background/50 p-6 rounded-2xl border border-divider/40">
+        <div>
+          <div class="flex items-center gap-3 mb-1">
+            <h1 class="text-3xl font-display font-semibold text-foreground tracking-tight">
+              {program.name}
+            </h1>
+            <span class="px-2.5 py-1 text-xs font-semibold bg-accent-blue/10 text-accent-blue rounded-full">
+              {program.category || 'Fitness'}
+            </span>
+            <span class={`px-2.5 py-1 text-xs font-semibold rounded-full ${program.status === 'active' ? 'bg-accent-green/10 text-accent-green' : 'bg-divider/50 text-foreground-muted'}`}>
+              {program.status === 'active' ? 'Aktif' : 'Pasif'}
+            </span>
+          </div>
+          <p class="text-foreground-muted text-sm">{program.user.name} adlı öğrencinin antrenman programı.</p>
+        </div>
+        <div class="flex gap-3">
+          <a href={isCoach(user) ? `/students/${program.userId}` : "/dashboard"} class="px-4 py-2 text-sm font-medium border border-divider hover:border-accent-purple/50 bg-background hover:bg-accent-purple/5 text-foreground transition-all duration-300 rounded-xl shadow-sm">
+            Geri Dön
+          </a>
+          {isCoach(user) && (
+            <a href={`/students/${program.userId}/program/${program.id}/edit`} class="px-4 py-2 text-sm font-medium bg-gradient-to-r from-accent-purple to-accent-blue text-white hover:opacity-90 transition-all duration-300 rounded-xl shadow-md cursor-pointer">
+              Düzenle
+            </a>
+          )}
+        </div>
+      </div>
+
+      {/* GÜNLER VE EGZERSİZLER */}
+      <div class="space-y-6">
+        {program.days.map((day) => (
+          <div class="bg-background/80 rounded-2xl border border-divider/50 shadow-sm overflow-hidden group hover:border-accent-purple/30 transition-colors">
+            {/* Gün Başlığı */}
+            <div class="px-5 py-4 border-b border-divider/50 bg-foreground/5 flex justify-between items-center">
+              <h3 class="text-lg font-semibold text-foreground flex items-center gap-2">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-accent-purple" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                {day.dayName}
+              </h3>
+              <span class="text-xs text-foreground-muted font-medium bg-background px-2 py-1 rounded-md border border-divider/50">
+                {day.exercises.length} Egzersiz
+              </span>
+            </div>
+            
+            {/* Egzersiz Listesi */}
+            {day.exercises.length > 0 ? (
+              <div class="divide-y divide-divider/30">
+                {day.exercises.map((ex, idx) => (
+                  <div class="p-5 flex flex-col md:flex-row gap-4 justify-between items-start md:items-center hover:bg-foreground/5 transition-colors">
+                    {/* Egzersiz Bilgisi */}
+                    <div class="flex items-start gap-4 flex-1">
+                      <div class="w-8 h-8 rounded-full bg-accent-blue/10 text-accent-blue flex-shrink-0 flex items-center justify-center font-bold text-sm">
+                        {idx + 1}
+                      </div>
+                      <div>
+                        {/* NOT EKLENDI */}
+                        <div class="w-full mt-2 lg:mt-0 lg:max-w-xs">
+                          {ex.notes && (
+                            <div class="bg-background rounded-l italic text-sm text-foreground-muted border border-divider/30 p-2 relative">
+                                <span class="block font-medium text-xs mb-1">Not:</span>
+                                {ex.notes}
+                            </div>
+                           )}
+                        </div>
+                        <h4 class="font-medium text-foreground text-base tracking-tight">{ex.name}</h4>
+                        <div class="flex flex-wrap items-center gap-x-4 gap-y-2 mt-2 text-sm text-foreground-muted">
+                          {ex.muscleGroup && (
+                            <span class="flex items-center gap-1.5 text-accent-orange/90">
+                              <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/></svg>
+                              {ex.muscleGroup}
+                            </span>
+                          )}
+                          <span class="flex items-center gap-1.5">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18"/><path d="M6 6l12 12"/></svg>
+                            {ex.sets} Set x {ex.reps}
+                          </span>
+                          {ex.weight && (
+                            <span class="flex items-center gap-1.5">
+                              <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+                              {ex.weight} kg
+                            </span>
+                          )}
+                          {ex.restSeconds && (
+                            <span class="flex items-center gap-1.5 text-accent-green/90">
+                              <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+                              Dinlenme {ex.restSeconds}sn
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+               <div class="px-5 py-8 text-center text-foreground-muted text-sm">
+                 Bu gün için egzersiz eklenmemiş. {isCoach(user) ? '(Düzenle butonundan egzersiz ekleyebilirsiniz)' : 'Dinlenme Günü.'}
+               </div>
+            )}
+          </div>
+        ))}
+
+        {program.days.length === 0 && (
+          <div class="text-center py-12 p-6 border border-divider/50 rounded-2xl bg-background/50">
+            <h3 class="text-lg font-medium text-foreground mb-2">Henüz Program İçeriği Yok</h3>
+            <p class="text-foreground-muted">Bu programa henüz hiç gün ya da egzersiz eklenmemiş.</p>
+          </div>
+        )}
+      </div>
+      
+    </div>
+  </div>
+</MainLayout>

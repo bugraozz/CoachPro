@@ -1,0 +1,272 @@
+---
+import MainLayout from '../../layouts/MainLayout.astro';
+import { getUserFromRequest, isCoach } from '../../lib/auth';
+import prisma from '../../lib/prisma';
+
+const user = await getUserFromRequest(Astro.request);
+
+if (!user) {
+  return Astro.redirect('/auth/login');
+}
+
+const userIsCoach = isCoach(user);
+
+let dietPlans: any[] = [];
+let students: any[] = [];
+
+if (userIsCoach) {
+  students = await prisma.user.findMany({
+    where: { coachId: user.id, role: 'student' },
+    select: { id: true, name: true },
+    orderBy: { name: 'asc' },
+  });
+
+  dietPlans = await prisma.dietPlan.findMany({
+    where: { user: { coachId: user.id } },
+    include: {
+      user: { select: { id: true, name: true } },
+      meals: {
+        include: { foods: true },
+        orderBy: { order: 'asc' }
+      }
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+} else {
+  dietPlans = await prisma.dietPlan.findMany({
+    where: { userId: user.id },
+    include: {
+      meals: {
+        include: { foods: true },
+        orderBy: { order: 'asc' }
+      }
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+}
+
+const activeDiet = dietPlans.find(d => d.active);
+---
+
+<MainLayout title="Diyet Planları" activePage="diet">
+  <header class="px-6 lg:px-8 py-5 border-b border-border-default bg-bg-secondary/80 backdrop-blur-xl sticky top-0 z-50">
+    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+      <div>
+        <h1 class="text-2xl font-bold text-text-primary">Diyet Planları</h1>
+        <p class="text-sm text-text-secondary mt-1">
+          {userIsCoach ? `${dietPlans.length} diyet planı oluşturulmuş` : 'Eğitmenin tarafından hazırlanan beslenme programı'}
+        </p>
+      </div>
+    </div>
+  </header>
+
+  <div class="p-6 lg:p-8">
+    {userIsCoach ? (
+      <!-- COACH VIEW -->
+      <div>
+        {dietPlans.length > 0 ? (
+          <div class="space-y-6">
+            {dietPlans.map(diet => (
+              <div class={`card ${diet.active ? 'border-accent-green/20' : ''}`}>
+                <div class="flex items-center justify-between mb-4">
+                  <div class="flex items-center gap-3">
+                    <div class={`w-12 h-12 rounded-xl flex items-center justify-center ${diet.active ? 'bg-accent-cyan/10' : 'bg-bg-tertiary'}`}>
+                      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class={diet.active ? 'text-accent-cyan' : 'text-text-muted'}><path d="M18 8h1a4 4 0 0 1 0 8h-1"/><path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z"/></svg>
+                    </div>
+                    <div>
+                      <h2 class="text-lg font-bold text-text-primary">{diet.name}</h2>
+                      <div class="flex items-center gap-2 mt-0.5">
+                        <a href={`/students/${diet.user.id}`} class="text-sm text-accent-primary hover:underline">{diet.user.name}</a>
+                        <span class="text-xs text-text-muted">• {new Date(diet.createdAt).toLocaleDateString('tr-TR')}</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <span class={`px-2.5 py-1 rounded-full text-xs font-semibold ${diet.active ? 'bg-accent-green/15 text-accent-green' : 'bg-text-muted/15 text-text-muted'}`}>
+                      {diet.active ? 'Aktif' : 'Pasif'}
+                    </span>
+                    <a href={`/students/${diet.user.id}/diet/${diet.id}/edit`} class="px-3 py-1.5 rounded-lg bg-accent-primary/10 text-accent-primary text-xs font-medium hover:bg-accent-primary/20 transition-colors">Düzenle</a>
+                    <button onclick={`if(confirm('Diyeti silmek istiyor musun?')) { fetch('/api/diet/${diet.id}', {method:'DELETE'}).then(r => r.ok ? location.reload() : alert('Hata')) }`} class="px-3 py-1.5 rounded-lg bg-accent-red/10 text-accent-red text-xs font-medium hover:bg-accent-red/20 transition-colors">Sil</button>
+                  </div>
+                </div>
+
+                <!-- Macro Summary -->
+                <div class="grid grid-cols-4 gap-3 mb-4">
+                  <div class="text-center p-2 rounded-lg bg-accent-green/5 border border-accent-green/10">
+                    <div class="text-sm font-bold text-accent-green">{diet.dailyCalorieTarget}</div>
+                    <div class="text-[10px] text-text-muted">kcal</div>
+                  </div>
+                  <div class="text-center p-2 rounded-lg bg-accent-cyan/5 border border-accent-cyan/10">
+                    <div class="text-sm font-bold text-accent-cyan">{diet.proteinTarget}g</div>
+                    <div class="text-[10px] text-text-muted">Protein</div>
+                  </div>
+                  <div class="text-center p-2 rounded-lg bg-accent-orange/5 border border-accent-orange/10">
+                    <div class="text-sm font-bold text-accent-orange">{diet.carbsTarget}g</div>
+                    <div class="text-[10px] text-text-muted">Karb</div>
+                  </div>
+                  <div class="text-center p-2 rounded-lg bg-accent-yellow/5 border border-accent-yellow/10">
+                    <div class="text-sm font-bold text-accent-yellow">{diet.fatTarget}g</div>
+                    <div class="text-[10px] text-text-muted">Yağ</div>
+                  </div>
+                </div>
+
+                <!-- Meals Summary -->
+                {diet.meals.length > 0 && (
+                  <div class="space-y-2">
+                    {diet.meals.map((meal: any) => (
+                      <div class="p-2 rounded-lg bg-bg-tertiary/50">
+                        <div class="flex items-center justify-between">
+                          <span class="text-sm font-medium text-text-primary">{meal.name}</span>
+                          <span class="text-xs text-text-muted">{meal.foods.length} besin • {meal.foods.reduce((s: number, f: any) => s + f.calories, 0)} kcal</span>
+                        </div>
+                        {meal.foods.length > 0 && (
+                          <div class="flex flex-wrap gap-1 mt-1">
+                            {meal.foods.map((food: any) => (
+                              <span class="text-[10px] px-1.5 py-0.5 rounded bg-bg-secondary text-text-muted">{food.name} ({food.amount}{food.unit})</span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div class="text-center py-16">
+            <div class="w-20 h-20 rounded-3xl bg-bg-tertiary flex items-center justify-center mx-auto mb-6">
+              <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="text-text-muted"><path d="M18 8h1a4 4 0 0 1 0 8h-1"/><path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z"/></svg>
+            </div>
+            <h3 class="text-xl font-bold text-text-primary mb-2">Henüz diyet planı oluşturulmamış</h3>
+            <p class="text-text-secondary mb-6 max-w-md mx-auto">Öğrenci detay sayfasından diyet planı oluşturabilirsiniz.</p>
+            {students.length > 0 && (
+              <a href={`/students/${students[0].id}/diet/new`} class="btn-primary">İlk Diyet Planını Oluştur</a>
+            )}
+          </div>
+        )}
+      </div>
+    ) : (
+      <!-- STUDENT VIEW -->
+      <div>
+        {activeDiet ? (
+          <div class="space-y-6">
+            <!-- Macro Overview -->
+            <div class="card">
+              <h2 class="text-lg font-semibold text-text-primary mb-6">{activeDiet.name}</h2>
+              <div class="grid grid-cols-2 lg:grid-cols-5 gap-4">
+                <div class="text-center p-4 rounded-xl bg-accent-green/10 border border-accent-green/20">
+                  <div class="text-2xl lg:text-3xl font-bold text-accent-green">{activeDiet.dailyCalorieTarget}</div>
+                  <div class="text-xs text-text-muted uppercase tracking-wider mt-1">Kalori</div>
+                </div>
+                <div class="text-center p-4 rounded-xl bg-accent-cyan/10 border border-accent-cyan/20">
+                  <div class="text-2xl lg:text-3xl font-bold text-accent-cyan">{activeDiet.proteinTarget}g</div>
+                  <div class="text-xs text-text-muted uppercase tracking-wider mt-1">Protein</div>
+                </div>
+                <div class="text-center p-4 rounded-xl bg-accent-orange/10 border border-accent-orange/20">
+                  <div class="text-2xl lg:text-3xl font-bold text-accent-orange">{activeDiet.carbsTarget}g</div>
+                  <div class="text-xs text-text-muted uppercase tracking-wider mt-1">Karbonhidrat</div>
+                </div>
+                <div class="text-center p-4 rounded-xl bg-accent-yellow/10 border border-accent-yellow/20">
+                  <div class="text-2xl lg:text-3xl font-bold text-accent-yellow">{activeDiet.fatTarget}g</div>
+                  <div class="text-xs text-text-muted uppercase tracking-wider mt-1">Yağ</div>
+                </div>
+                <div class="text-center p-4 rounded-xl bg-accent-primary/10 border border-accent-primary/20">
+                  <div class="text-2xl lg:text-3xl font-bold text-accent-primary">{(activeDiet.waterTarget / 1000).toFixed(1)}L</div>
+                  <div class="text-xs text-text-muted uppercase tracking-wider mt-1">Su</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Meals -->
+            <div class="space-y-4">
+              {activeDiet.meals.map((meal: any) => (
+                <div class="card">
+                  <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-lg font-semibold text-text-primary flex items-center gap-3">
+                      <span class="text-2xl">
+                        {meal.name === 'Kahvaltı' ? '🌅' : 
+                         meal.name === 'Öğle Yemeği' ? '☀️' : 
+                         meal.name === 'Akşam Yemeği' ? '🌙' : '🍎'}
+                      </span>
+                      {meal.name}
+                    </h3>
+                    <span class="text-sm font-semibold text-accent-green bg-accent-green/10 px-3 py-1 rounded-full">
+                      {meal.foods.reduce((sum: number, f: any) => sum + f.calories, 0)} kcal
+                    </span>
+                  </div>
+
+                  {meal.foods.length > 0 ? (
+                    <div class="overflow-x-auto">
+                      <table class="w-full">
+                        <thead>
+                          <tr class="border-b border-border-default">
+                            <th class="text-left py-3 px-4 text-xs font-semibold text-text-muted uppercase tracking-wider">Besin</th>
+                            <th class="text-center py-3 px-4 text-xs font-semibold text-text-muted uppercase tracking-wider">Miktar</th>
+                            <th class="text-center py-3 px-4 text-xs font-semibold text-text-muted uppercase tracking-wider">Kalori</th>
+                            <th class="text-center py-3 px-4 text-xs font-semibold text-text-muted uppercase tracking-wider">Protein</th>
+                            <th class="text-center py-3 px-4 text-xs font-semibold text-text-muted uppercase tracking-wider">Karb</th>
+                            <th class="text-center py-3 px-4 text-xs font-semibold text-text-muted uppercase tracking-wider">Yağ</th>
+                          </tr>
+                        </thead>
+                        <tbody class="divide-y divide-border-default">
+                          {meal.foods.map((food: any) => (
+                            <tr class="hover:bg-bg-tertiary transition-colors">
+                              <td class="py-3 px-4 font-medium text-text-primary">{food.name}</td>
+                              <td class="py-3 px-4 text-center text-text-secondary">{food.amount} {food.unit}</td>
+                              <td class="py-3 px-4 text-center font-semibold">{food.calories}</td>
+                              <td class="py-3 px-4 text-center text-accent-cyan font-semibold">{food.protein}g</td>
+                              <td class="py-3 px-4 text-center text-accent-orange font-semibold">{food.carbs}g</td>
+                              <td class="py-3 px-4 text-center text-accent-yellow font-semibold">{food.fat}g</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <p class="text-center py-4 text-text-muted">Bu öğüne henüz besin eklenmemiş.</p>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            <!-- Water Tracker -->
+            <div class="card border-accent-cyan/20">
+              <h3 class="text-lg font-semibold text-text-primary mb-4 flex items-center gap-2">
+                💧 Günlük Su Takibi
+                <span class="text-sm font-normal text-text-muted">({activeDiet.waterTarget}ml hedef)</span>
+              </h3>
+              <div class="flex flex-wrap gap-3">
+                {Array.from({ length: Math.ceil(activeDiet.waterTarget / 250) }).map((_, i) => (
+                  <button 
+                    class="water-glass w-10 h-12 rounded-b-xl rounded-t-sm border-2 border-accent-cyan/30 hover:border-accent-cyan transition-all cursor-pointer"
+                    data-index={i}
+                  ></button>
+                ))}
+              </div>
+              <p class="text-xs text-text-muted mt-4">Her bardak 250ml'yi temsil eder. Tıklayarak içtiğinizi işaretleyin.</p>
+            </div>
+          </div>
+        ) : (
+          <div class="text-center py-16">
+            <div class="w-20 h-20 rounded-3xl bg-bg-tertiary flex items-center justify-center mx-auto mb-6">
+              <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="text-text-muted"><path d="M18 8h1a4 4 0 0 1 0 8h-1"/><path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z"/><line x1="6" y1="1" x2="6" y2="4"/><line x1="10" y1="1" x2="10" y2="4"/><line x1="14" y1="1" x2="14" y2="4"/></svg>
+            </div>
+            <h3 class="text-xl font-bold text-text-primary mb-2">Henüz diyet planı yok</h3>
+            <p class="text-text-secondary mb-6 max-w-md mx-auto">Eğitmeniniz size bir diyet planı atadığında burada görüntülenecek.</p>
+          </div>
+        )}
+      </div>
+    )}
+  </div>
+
+  <script is:inline>
+    document.querySelectorAll('.water-glass').forEach(glass => {
+      glass.addEventListener('click', function() {
+        this.classList.toggle('bg-accent-cyan');
+        this.classList.toggle('border-accent-cyan');
+        this.classList.toggle('shadow-[0_4px_15px_rgba(6,182,212,0.4)]');
+      });
+    });
+  </script>
+</MainLayout>

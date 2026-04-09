@@ -1,0 +1,44 @@
+# Dependencies
+node_modules/
+astro-app/node_modules/
+
+# Build outputs
+dist/
+build/
+.astro/
+astro-app/.astro/
+astro-app/dist/
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+
+# Test and coverage
+coverage/
+*.tsbuildinfo
+
+# Runtime/generated files
+uploads/
+astro-app/uploads/
+
+# OS / Editor
+.DS_Store
+Thumbs.db

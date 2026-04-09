@@ -1,0 +1,333 @@
+---
+import ShapeGrid from '../../components/ShapeGrid';
+import { hashPassword, generateReferralCode, getUserFromRequest } from '../../lib/auth';
+import prisma from '../../lib/prisma';
+
+const existingUser = await getUserFromRequest(Astro.request);
+if (existingUser) {
+  return Astro.redirect('/dashboard');
+}
+
+let error = '';
+
+if (Astro.request.method === 'POST') {
+  const formData = await Astro.request.formData();
+  
+  const name = formData.get('name') as string;
+  const email = formData.get('email') as string;
+  const password = formData.get('password') as string;
+  const confirmPassword = formData.get('confirmPassword') as string;
+  const role = formData.get('role') as string;
+  const referralCode = formData.get('referralCode') as string;
+
+  // Validasyon
+  if (!name || !email || !password || !role) {
+    error = 'Tüm alanları doldurun.';
+  } else if (password !== confirmPassword) {
+    error = 'Şifreler eşleşmiyor.';
+  } else if (password.length < 6) {
+    error = 'Şifre en az 6 karakter olmalıdır.';
+  } else {
+    // Email kontrolü
+    const existingEmail = await prisma.user.findUnique({ where: { email } });
+    if (existingEmail) {
+      error = 'Bu e-posta adresi zaten kullanılıyor.';
+    } else {
+      // Öğrenci ise referans kodu kontrolü
+      let coachId: string | null = null;
+      if (role === 'student') {
+        if (!referralCode) {
+          error = 'Öğrenci olarak kayıt olmak için eğitmen referans kodu gereklidir.';
+        } else {
+          const coach = await prisma.user.findFirst({
+            where: { referralCode: referralCode.toUpperCase(), role: 'coach' }
+          });
+          if (!coach) {
+            error = 'Geçersiz referans kodu.';
+          } else if (coach.subscriptionStatus !== 'active') {
+            error = 'Bu eğitmenin aktif aboneliği bulunmuyor.';
+          } else {
+            const activePackageCount = await prisma.coachPackage.count({
+              where: { coachId: coach.id, isActive: true },
+            });
+
+            if (activePackageCount === 0) {
+              error = 'Bu eğitmenin aktif paketi bulunmuyor. Lütfen eğitmeninizle iletişime geçin.';
+            } else {
+              coachId = coach.id;
+            }
+          }
+        }
+      }
+
+      if (!error) {
+        if (role === 'coach') {
+          const hashedPassword = await hashPassword(password);
+          const user = await prisma.user.create({
+            data: {
+              name,
+              email,
+              password: hashedPassword,
+              role: 'coach',
+              referralCode: generateReferralCode(),
+              subscriptionStatus: 'pending',
+              active: false,
+            },
+          });
+          return Astro.redirect(`/auth/payment?userId=${user.id}`);
+        }
+
+        const hashedPassword = await hashPassword(password);
+        const user = await prisma.user.create({
+          data: {
+            name,
+            email,
+            password: hashedPassword,
+            role: 'student',
+            coachId,
+            active: false,
+            studentPaymentStatus: 'pending',
+          },
+        });
+
+        return Astro.redirect(`/auth/payment?userId=${user.id}`);
+      }
+    }
+  }
+}
+---
+
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Kayıt Ol - CoachPro</title>
+  <link rel="stylesheet" href="/src/styles/global.css" />
+</head>
+<body class="min-h-screen relative bg-white" style="background-color: #ffffff;">
+  <!-- Subtle ShapeGrid Background -->
+  <div class="fixed inset-0 z-0 bg-white pointer-events-none opacity-10">
+    <ShapeGrid
+      client:load
+      speed={0}
+      squareSize={52}
+      direction="diagonal"
+      borderColor="rgba(148, 163, 184, 1.8)"
+      hoverFillColor="transparent"
+      shape="square"
+      vignetteColor="transparent"
+    />
+  </div>
+
+  <!-- Header -->
+  <header class="fixed top-0 inset-x-0 z-50 bg-transparent">
+    <div class="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
+      <a href="/" class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-xl bg-linear-to-br from-red-600 to-red-800 flex items-center justify-center text-white font-bold">CP</div>
+        <span class="text-xl font-bold text-gray-900">CoachPro</span>
+      </a>
+      <div class="flex items-center gap-4">
+        <a href="/auth/login" class="text-sm font-medium text-gray-600 hover:text-gray-900 transition-colors">Giriş Yap</a>
+        <a href="/auth/login" class="btn-primary">Giriş Yap</a>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Content -->
+  <section class="pt-32 pb-20 px-6 relative z-10">
+    <div class="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-2 gap-10 items-start">
+      <div class="lg:pt-8">
+        <div class="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-red-50 border border-red-200 text-red-600 text-sm font-medium mb-6">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg>
+          Ücretsiz Başlangıç Paketi
+        </div>
+        <h1 class="text-4xl sm:text-5xl font-bold text-gray-900 mb-5 leading-tight">
+          CoachPro'ya katılın,
+          <span class="relative inline-block whitespace-nowrap">
+            <span class="relative z-10 text-red-500">koçluğunuzu büyütün</span>
+            <svg class="absolute -bottom-2 left-0 w-full h-3 -rotate-1 text-red-500" viewBox="0 0 100 20" preserveAspectRatio="none" aria-hidden="true">
+              <path d="M 2,12 Q 25,26 99,5" stroke="currentColor" stroke-width="7" stroke-linecap="round" fill="none" />
+            </svg>
+          </span>
+        </h1>
+        <p class="text-gray-600 text-lg max-w-xl mb-8">
+          Eğitmen olarak öğrenci portföyünüzü yönetin, öğrenci olarak profesyonel bir sistemde gelişiminizi takip edin.
+        </p>
+
+        <div class="space-y-3 max-w-lg">
+          <div class="flex items-start gap-3 p-4 rounded-xl bg-white/90 border border-gray-200">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-red-500 shrink-0 mt-0.5"><polyline points="20 6 9 17 4 12"/></svg>
+            <div>
+              <p class="font-semibold text-gray-900 text-sm">Program ve diyet yönetimi tek panelde</p>
+              <p class="text-xs text-gray-500 mt-1">Koçluk operasyonunuzu dağınık araçlardan kurtarın.</p>
+            </div>
+          </div>
+          <div class="flex items-start gap-3 p-4 rounded-xl bg-white/90 border border-gray-200">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-red-500 shrink-0 mt-0.5"><polyline points="20 6 9 17 4 12"/></svg>
+            <div>
+              <p class="font-semibold text-gray-900 text-sm">Referans kodu ile hızlı öğrenci eşleşmesi</p>
+              <p class="text-xs text-gray-500 mt-1">Öğrencileriniz dakikalar içinde hesabınıza bağlanır.</p>
+            </div>
+          </div>
+          <div class="flex items-start gap-3 p-4 rounded-xl bg-white/90 border border-gray-200">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-red-500 shrink-0 mt-0.5"><polyline points="20 6 9 17 4 12"/></svg>
+            <div>
+              <p class="font-semibold text-gray-900 text-sm">AI destekli gelişim analizi</p>
+              <p class="text-xs text-gray-500 mt-1">Ölçümler ve analizlerle ilerlemeyi görünür hale getirin.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div>
+      <!-- Page Header -->
+      <div class="text-center mb-10 lg:text-left">
+        <div class="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-red-50 border border-red-200 text-red-600 text-sm font-medium mb-6">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg>
+          Ücretsiz Hesap Oluşturun
+        </div>
+        <h1 class="text-3xl sm:text-4xl font-bold text-gray-900 mb-3">Hemen Kayıt Olun</h1>
+        <p class="text-gray-600">Eğitmen veya öğrenci olarak platforma katılın</p>
+      </div>
+
+      <!-- Register Card -->
+      <div class="bg-white/95 backdrop-blur-sm rounded-2xl border border-gray-200 shadow-sm p-8 sm:p-10">
+        {error && (
+          <div class="mb-6 p-4 rounded-lg bg-red-50 border border-red-200 text-red-600 text-sm flex items-center gap-3">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="shrink-0"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+            {error}
+          </div>
+        )}
+
+        <form method="POST" class="space-y-6" id="registerForm">
+          <!-- Role Selection -->
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-3">Hesap Türünüz</label>
+            <div class="grid grid-cols-2 gap-4">
+              <label class="relative cursor-pointer">
+                <input type="radio" name="role" value="coach" class="peer sr-only" required />
+                <div class="p-5 rounded-xl border-2 border-gray-200 bg-white transition-all peer-checked:border-red-500 peer-checked:bg-red-50 hover:border-gray-300">
+                  <div class="flex flex-col items-center gap-3 text-center">
+                    <div class="w-14 h-14 rounded-2xl bg-red-50 border-2 border-red-200 flex items-center justify-center">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-red-500"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                    </div>
+                    <div>
+                      <span class="font-semibold text-gray-900 block">Eğitmen</span>
+                      <span class="text-xs text-gray-500 mt-0.5 block">Öğrencilerinizi yönetin</span>
+                    </div>
+                  </div>
+                </div>
+              </label>
+              <label class="relative cursor-pointer">
+                <input type="radio" name="role" value="student" class="peer sr-only" />
+                <div class="p-5 rounded-xl border-2 border-gray-200 bg-white transition-all peer-checked:border-red-500 peer-checked:bg-red-50 hover:border-gray-300">
+                  <div class="flex flex-col items-center gap-3 text-center">
+                    <div class="w-14 h-14 rounded-2xl bg-red-50 border-2 border-red-200 flex items-center justify-center">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-red-500"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                    </div>
+                    <div>
+                      <span class="font-semibold text-gray-900 block">Öğrenci</span>
+                      <span class="text-xs text-gray-500 mt-0.5 block">Eğitmeninize bağlanın</span>
+                    </div>
+                  </div>
+                </div>
+              </label>
+            </div>
+          </div>
+
+          <!-- Referral Code (for students) -->
+          <div id="referralCodeField" class="hidden">
+            <label class="block text-sm font-medium text-gray-700 mb-1.5">Eğitmen Referans Kodu</label>
+            <input type="text" id="referralCode" name="referralCode" class="w-full px-4 py-3 rounded-lg border border-gray-300 bg-white text-gray-900 text-sm placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-red-200 focus:border-red-400 transition-all uppercase tracking-widest font-mono" placeholder="XXXXXXXX" maxlength="8" />
+            <p class="text-xs text-gray-500 mt-1.5">Eğitmeninizden aldığınız 8 haneli kodu girin</p>
+          </div>
+
+          <!-- Student payment info -->
+          <div id="studentPaymentInfo" class="hidden p-4 rounded-lg bg-amber-50 border border-amber-200">
+            <div class="flex items-start gap-3">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-amber-600 shrink-0 mt-0.5"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+              <div>
+                <p class="text-sm text-gray-900 font-medium">Öğrenci Ödeme Adımı</p>
+                <p class="text-xs text-gray-600 mt-0.5">Kayıt sonrası eğitmen paketlerinden birini seçip ödeme yapmadan hesabınız aktif olmaz.</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Name + Email -->
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-5">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1.5" for="name">Ad Soyad</label>
+              <input type="text" id="name" name="name" class="w-full px-4 py-3 rounded-lg border border-gray-300 bg-white text-gray-900 text-sm placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-red-200 focus:border-red-400 transition-all" placeholder="Adınız Soyadınız" required />
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1.5" for="email">E-posta</label>
+              <input type="email" id="email" name="email" class="w-full px-4 py-3 rounded-lg border border-gray-300 bg-white text-gray-900 text-sm placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-red-200 focus:border-red-400 transition-all" placeholder="ornek@email.com" required />
+            </div>
+          </div>
+
+          <!-- Password -->
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-5">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1.5" for="password">Şifre</label>
+              <input type="password" id="password" name="password" class="w-full px-4 py-3 rounded-lg border border-gray-300 bg-white text-gray-900 text-sm placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-red-200 focus:border-red-400 transition-all" placeholder="En az 6 karakter" required minlength="6" />
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1.5" for="confirmPassword">Şifre Tekrar</label>
+              <input type="password" id="confirmPassword" name="confirmPassword" class="w-full px-4 py-3 rounded-lg border border-gray-300 bg-white text-gray-900 text-sm placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-red-200 focus:border-red-400 transition-all" placeholder="Şifreyi tekrar girin" required />
+            </div>
+          </div>
+
+          <button type="submit" class="btn-primary w-full py-3 text-base">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg>
+            Kayıt Ol
+          </button>
+        </form>
+
+        <div class="mt-6 pt-6 border-t border-gray-100 text-center">
+          <p class="text-sm text-gray-500">
+            Zaten hesabınız var mı? 
+            <a href="/auth/login" class="text-red-600 hover:underline font-semibold">Giriş Yap</a>
+          </p>
+        </div>
+      </div>
+
+      <!-- Trust -->
+      <div class="mt-8 text-center">
+        <div class="flex items-center justify-center lg:justify-start gap-6 text-xs text-gray-400">
+          <span class="flex items-center gap-1.5">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            256-bit SSL
+          </span>
+          <span class="flex items-center gap-1.5">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10"/></svg>
+            Güvenli Kayıt
+          </span>
+          <span class="flex items-center gap-1.5">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+            500+ Eğitmen
+          </span>
+        </div>
+      </div>
+      </div>
+    </div>
+  </section>
+
+  <script is:inline>
+    const roleInputs = document.querySelectorAll('input[name="role"]');
+    const referralField = document.getElementById('referralCodeField');
+    const studentPaymentInfo = document.getElementById('studentPaymentInfo');
+
+    roleInputs.forEach(input => {
+      input.addEventListener('change', (e) => {
+        if (e.target.value === 'student') {
+          referralField.classList.remove('hidden');
+          studentPaymentInfo.classList.remove('hidden');
+        } else {
+          referralField.classList.add('hidden');
+          studentPaymentInfo.classList.add('hidden');
+        }
+      });
+    });
+  </script>
+</body>
+</html>

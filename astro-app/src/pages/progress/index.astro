@@ -1,0 +1,304 @@
+---
+import MainLayout from '../../layouts/MainLayout.astro';
+import { getUserFromRequest, isCoach } from '../../lib/auth';
+import prisma from '../../lib/prisma';
+
+const user = await getUserFromRequest(Astro.request);
+
+if (!user) {
+  return Astro.redirect('/auth/login');
+}
+
+const userIsCoach = isCoach(user);
+
+// Eğitmen: öğrenci seçebilir
+let students: any[] = [];
+if (userIsCoach) {
+  students = await prisma.user.findMany({
+    where: { coachId: user.id, role: 'student' },
+    select: { id: true, name: true, currentWeight: true, targetWeight: true, height: true },
+    orderBy: { name: 'asc' },
+  });
+}
+
+// Hangi kullanıcının verileri gösterilecek
+const selectedId = Astro.url.searchParams.get('student') || (userIsCoach && students.length > 0 ? students[0].id : user.id);
+
+const targetUser = userIsCoach
+  ? (students.find(s => s.id === selectedId) || students[0] || null)
+  : user;
+
+// Veri yoksa boş göster
+let weightHistory: any[] = [];
+let measurements: any[] = [];
+let analyses: any[] = [];
+let currentWeight: number | null = null;
+let targetWeight: number | null = null;
+let height: number | null = null;
+
+if (targetUser) {
+  const userData = await prisma.user.findUnique({
+    where: { id: userIsCoach ? targetUser.id : user.id },
+    include: {
+      weightHistory: { orderBy: { date: 'asc' } },
+      measurements: { orderBy: { date: 'desc' }, take: 10 },
+      bodyAnalyses: { orderBy: { date: 'desc' }, take: 2 },
+    },
+  });
+  weightHistory = userData?.weightHistory || [];
+  measurements = userData?.measurements || [];
+  analyses = userData?.bodyAnalyses || [];
+  currentWeight = userData?.currentWeight || null;
+  targetWeight = userData?.targetWeight || null;
+  height = userData?.height || null;
+} else if (!userIsCoach) {
+  currentWeight = user.currentWeight;
+  targetWeight = user.targetWeight;
+  height = user.height;
+}
+
+const startWeight = weightHistory.length > 0 ? weightHistory[0].weight : null;
+const weightChange = startWeight && currentWeight ? (currentWeight - startWeight).toFixed(1) : null;
+const bmi = currentWeight && height ? (currentWeight / ((height / 100) ** 2)).toFixed(1) : null;
+---
+
+<MainLayout title="Gelişim Takibi" activePage="progress">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <header class="px-6 lg:px-8 py-5 border-b border-border-default bg-bg-secondary/80 backdrop-blur-xl sticky top-0 z-50">
+    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+      <div>
+        <h1 class="text-2xl font-bold text-text-primary">Gelişim Takibi</h1>
+        <p class="text-sm text-text-secondary mt-1">
+          {userIsCoach ? 'Öğrenci bazlı kilo ve ölçüm takibi' : 'Kilo ve vücut ölçümlerindeki değişimler'}
+        </p>
+      </div>
+      {userIsCoach && students.length > 0 && (
+        <div class="flex items-center gap-2">
+          <label class="text-sm text-text-secondary font-medium">Öğrenci:</label>
+          <select id="studentPicker" class="px-4 py-2 rounded-lg border border-border-default bg-bg-primary text-text-primary text-sm focus:outline-none focus:ring-2 focus:ring-accent-primary/50 min-w-[180px]">
+            {students.map(s => (
+              <option value={s.id} selected={s.id === selectedId}>{s.name}</option>
+            ))}
+          </select>
+        </div>
+      )}
+    </div>
+  </header>
+
+  <div class="p-6 lg:p-8">
+    {userIsCoach && students.length === 0 ? (
+      <div class="text-center py-16">
+        <div class="w-20 h-20 rounded-3xl bg-bg-tertiary flex items-center justify-center mx-auto mb-6">
+          <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="text-text-muted"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+        </div>
+        <h3 class="text-xl font-bold text-text-primary mb-2">Henüz öğrenci yok</h3>
+        <p class="text-text-secondary">Gelişim takibi için önce öğrenci eklemeniz gerekiyor.</p>
+      </div>
+    ) : (
+      <div>
+        {/* Coach: selected student info bar */}
+        {userIsCoach && targetUser && (
+          <div class="card mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div class="flex items-center gap-3">
+              <div class="w-12 h-12 rounded-xl bg-gradient-to-br from-accent-primary to-accent-purple flex items-center justify-center text-lg font-bold text-white">
+                {targetUser.name?.charAt(0).toUpperCase()}
+              </div>
+              <div>
+                <h3 class="font-semibold text-text-primary">{targetUser.name}</h3>
+                <p class="text-xs text-text-muted">
+                  {currentWeight ? `${currentWeight} kg` : 'Kilo yok'}
+                  {targetWeight ? ` → Hedef: ${targetWeight} kg` : ''}
+                  {height ? ` • ${height} cm` : ''}
+                </p>
+              </div>
+            </div>
+            <a href={`/students/${targetUser.id}`} class="btn-ghost text-xs">
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+              Profili Gör
+            </a>
+          </div>
+        )}
+
+        <!-- Stats Overview -->
+        <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 lg:gap-5 mb-8">
+          <div class="stat-card">
+            <div class="stat-value">{currentWeight || '—'}</div>
+            <div class="stat-label">Mevcut Kilo (kg)</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value">{targetWeight || '—'}</div>
+            <div class="stat-label">Hedef Kilo (kg)</div>
+          </div>
+          <div class="stat-card">
+            <div class={`stat-value ${weightChange && parseFloat(weightChange) < 0 ? 'text-accent-green' : 'text-accent-orange'}`}>
+              {weightChange ? `${parseFloat(weightChange) > 0 ? '+' : ''}${weightChange}` : '—'}
+            </div>
+            <div class="stat-label">Toplam Değişim (kg)</div>
+          </div>
+          <div class="stat-card">
+            <div class={`stat-value ${bmi && parseFloat(bmi) > 25 ? 'text-accent-orange' : 'text-accent-green'}`}>{bmi || '—'}</div>
+            <div class="stat-label">BMI</div>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <!-- Weight Chart -->
+          <div class="lg:col-span-2 card">
+            <h3 class="text-lg font-semibold text-text-primary mb-4 flex items-center gap-2">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-accent-primary"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
+              Kilo Grafiği
+            </h3>
+            {weightHistory.length > 1 ? (
+              <div class="h-[300px] relative">
+                <canvas id="weightChart"></canvas>
+              </div>
+            ) : (
+              <div class="h-[300px] flex items-center justify-center text-text-muted">
+                <p>Grafik için en az 2 kilo kaydı gerekli</p>
+              </div>
+            )}
+          </div>
+
+          <!-- Weight History List -->
+          <div class="card">
+            <h3 class="text-lg font-semibold text-text-primary mb-4">Kilo Geçmişi</h3>
+            {weightHistory.length > 0 ? (
+              <div class="space-y-2 max-h-[300px] overflow-y-auto">
+                {weightHistory.slice().reverse().slice(0, 10).map((record) => (
+                  <div class="flex items-center justify-between p-3 rounded-lg bg-bg-tertiary">
+                    <span class="text-sm text-text-secondary">
+                      {new Date(record.date).toLocaleDateString('tr-TR')}
+                    </span>
+                    <span class="font-semibold text-text-primary">{record.weight} kg</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p class="text-center py-8 text-text-muted">Henüz kilo kaydı yok</p>
+            )}
+          </div>
+        </div>
+
+        <!-- Body Comparison -->
+        {analyses.length >= 2 && (
+          <div class="card mt-6">
+            <h3 class="text-lg font-semibold text-text-primary mb-6 flex items-center gap-2">
+              📸 Vücut Karşılaştırması
+            </h3>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div class="relative rounded-xl overflow-hidden border border-border-default group">
+                <img src={analyses[analyses.length - 1].imageUrl} alt="Önce" class="w-full aspect-square object-cover" />
+                <div class="absolute inset-x-0 bottom-0 p-4 bg-gradient-to-t from-black/80 to-transparent">
+                  <span class="px-3 py-1 rounded bg-accent-orange/20 text-accent-orange font-bold text-xs uppercase border border-accent-orange/50">ÖNCE</span>
+                  <span class="ml-2 text-white text-sm">{new Date(analyses[analyses.length - 1].date).toLocaleDateString('tr-TR')}</span>
+                </div>
+              </div>
+              <div class="relative rounded-xl overflow-hidden border border-border-default group">
+                <img src={analyses[0].imageUrl} alt="Sonra" class="w-full aspect-square object-cover" />
+                <div class="absolute inset-x-0 bottom-0 p-4 bg-gradient-to-t from-black/80 to-transparent">
+                  <span class="px-3 py-1 rounded bg-accent-green/20 text-accent-green font-bold text-xs uppercase border border-accent-green/50">SONRA</span>
+                  <span class="ml-2 text-white text-sm">{new Date(analyses[0].date).toLocaleDateString('tr-TR')}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <!-- Measurements -->
+        {measurements.length > 0 && (
+          <div class="card mt-6">
+            <h3 class="text-lg font-semibold text-text-primary mb-4 flex items-center gap-2">
+              📏 Son Ölçümler
+              <span class="text-sm font-normal text-text-muted">
+                ({new Date(measurements[0].date).toLocaleDateString('tr-TR')})
+              </span>
+            </h3>
+            <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
+              {measurements[0].chest && (
+                <div class="text-center p-4 rounded-xl bg-bg-tertiary">
+                  <div class="text-2xl font-bold text-text-primary">{measurements[0].chest}</div>
+                  <div class="text-xs text-text-muted uppercase mt-1">Göğüs (cm)</div>
+                </div>
+              )}
+              {measurements[0].waist && (
+                <div class="text-center p-4 rounded-xl bg-bg-tertiary">
+                  <div class="text-2xl font-bold text-text-primary">{measurements[0].waist}</div>
+                  <div class="text-xs text-text-muted uppercase mt-1">Bel (cm)</div>
+                </div>
+              )}
+              {measurements[0].hip && (
+                <div class="text-center p-4 rounded-xl bg-bg-tertiary">
+                  <div class="text-2xl font-bold text-text-primary">{measurements[0].hip}</div>
+                  <div class="text-xs text-text-muted uppercase mt-1">Kalça (cm)</div>
+                </div>
+              )}
+              {measurements[0].armLeft && (
+                <div class="text-center p-4 rounded-xl bg-bg-tertiary">
+                  <div class="text-2xl font-bold text-text-primary">{measurements[0].armLeft}</div>
+                  <div class="text-xs text-text-muted uppercase mt-1">Kol (cm)</div>
+                </div>
+              )}
+              {measurements[0].bodyFat && (
+                <div class="text-center p-4 rounded-xl bg-bg-tertiary">
+                  <div class="text-2xl font-bold text-accent-cyan">{measurements[0].bodyFat}%</div>
+                  <div class="text-xs text-text-muted uppercase mt-1">Vücut Yağı</div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    )}
+  </div>
+
+  <script is:inline define:vars={{ weightHistory }}>
+    // Student picker
+    const picker = document.getElementById('studentPicker');
+    if (picker) {
+      picker.addEventListener('change', () => {
+        window.location.href = '/progress?student=' + picker.value;
+      });
+    }
+
+    if (weightHistory.length > 1 && typeof Chart !== 'undefined') {
+      const ctx = document.getElementById('weightChart');
+      if (ctx) {
+        new Chart(ctx, {
+          type: 'line',
+          data: {
+            labels: weightHistory.map(r => new Date(r.date).toLocaleDateString('tr-TR', { day: '2-digit', month: 'short' })),
+            datasets: [{
+              label: 'Kilo (kg)',
+              data: weightHistory.map(r => r.weight),
+              borderColor: '#CD0000',
+              backgroundColor: 'rgba(99, 102, 241, 0.1)',
+              fill: true,
+              tension: 0.4,
+              pointBackgroundColor: '#CD0000',
+              pointBorderColor: '#fff',
+              pointBorderWidth: 2,
+              pointRadius: 4,
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: { display: false }
+            },
+            scales: {
+              x: {
+                grid: { color: 'rgba(255,255,255,0.05)' },
+                ticks: { color: '#64748b' }
+              },
+              y: {
+                grid: { color: 'rgba(255,255,255,0.05)' },
+                ticks: { color: '#64748b' }
+              }
+            }
+          }
+        });
+      }
+    }
+  </script>
+</MainLayout>

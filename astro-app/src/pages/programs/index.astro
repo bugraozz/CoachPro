@@ -1,0 +1,132 @@
+﻿---
+import MainLayout from '../../layouts/MainLayout.astro';
+import { getUserFromRequest, isCoach } from '../../lib/auth';
+import prisma from '../../lib/prisma';
+
+const user = await getUserFromRequest(Astro.request);
+
+if (!user) {
+  return Astro.redirect('/auth/login');
+}
+
+const userIsCoach = isCoach(user);
+
+let programs: any[] = [];
+let students: any[] = [];
+
+if (userIsCoach) {
+  students = await prisma.user.findMany({
+    where: { coachId: user.id, role: 'student' },
+    select: { id: true, name: true },
+    orderBy: { name: 'asc' },
+  });
+  
+  programs = await prisma.program.findMany({
+    where: { user: { coachId: user.id } },
+    include: {
+      user: { select: { id: true, name: true } },
+      days: {
+        include: { exercises: true },
+        orderBy: { order: 'asc' }
+      }
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+} else {
+  programs = await prisma.program.findMany({
+    where: { userId: user.id },
+    include: {
+      user: { select: { id: true, name: true } },
+      days: {
+        include: { exercises: true },
+        orderBy: { order: 'asc' }
+      }
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+}
+---
+
+<MainLayout title="Antrenman Programları" activePage="programs">
+  <header class="px-6 lg:px-8 py-5 border-b border-border-default bg-bg-secondary/80 backdrop-blur-xl sticky top-0 z-50">
+    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+      <div>
+        <h1 class="text-2xl font-bold text-text-primary">Antrenman Programları</h1>
+        <p class="text-sm text-text-secondary mt-1">
+          {userIsCoach ? `${programs.length} program oluşturulmuş` : `Toplam ${programs.length} programın bulunuyor`}
+        </p>
+      </div>
+    </div>
+  </header>
+
+  <div class="p-6 lg:p-8">
+    <div>
+      {programs.length > 0 ? (
+        <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+          {programs.map((program: any) => (
+            <div class={`card flex flex-col ${program.status === 'active' ? 'border-accent-green/30 bg-accent-green/5' : 'border-border-default'}`}>
+              
+              <div class="flex items-start justify-between mb-4">
+                <div class="flex items-center gap-3">
+                  <div class={`w-12 h-12 rounded-xl flex items-center justify-center ${program.status === 'active' ? 'bg-accent-green/20' : 'bg-bg-tertiary'}`}>
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class={program.status === 'active' ? 'text-accent-green' : 'text-text-muted'}><path d="m6.5 6.5 11 11"/><path d="m21 21-1-1"/><path d="m3 3 1 1"/><path d="m18 22 4-4"/><path d="m2 6 4-4"/><path d="m3 10 7-7"/><path d="m14 21 7-7"/></svg>
+                  </div>
+                  <div>
+                    <h2 class="text-lg font-bold text-text-primary">
+                      <a href={`/programs/${program.id}`} class="hover:text-accent-primary transition-colors">{program.name}</a>
+                    </h2>
+                    {userIsCoach ? (
+                      <a href={`/students/${program.user.id}`} class="text-sm text-accent-primary hover:underline">{program.user.name}</a>
+                    ) : (
+                      <span class={`text-xs ${program.status === 'active' ? 'text-accent-green' : 'text-text-muted'}`}>{program.status === 'active' ? 'Aktif Program' : 'Pasif Program'}</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+              
+              <div class="flex-1">
+                <div class="flex items-center gap-4 text-sm text-text-muted mb-4 border-b border-border-default pb-4">
+                    <div>
+                      <span class="block font-medium text-text-primary">{program.days.length}</span>
+                      <span class="text-xs">Gün</span>
+                    </div>
+                    <div>
+                      <span class="block font-medium text-text-primary">{program.days.reduce((acc: number, day: any) => acc + day.exercises.length, 0)}</span>
+                      <span class="text-xs">Egzersiz</span>
+                    </div>
+                     <div>
+                      <span class="block font-medium text-text-primary">{program.category || 'Fitness'}</span>
+                      <span class="text-xs">Kategori</span>
+                    </div>
+                </div>
+              </div>
+              
+              <div class="flex items-center justify-end gap-2 mt-auto pt-2">
+                <a href={`/programs/${program.id}`} class="px-3 py-1.5 rounded-lg bg-accent-blue/10 text-accent-blue text-xs font-medium hover:bg-accent-blue/20 transition-colors">Görüntüle</a>
+                {userIsCoach && (
+                  <>
+                    <a href={`/students/${program.user.id}/program/${program.id}/edit`} class="px-3 py-1.5 rounded-lg bg-accent-primary/10 text-accent-primary text-xs font-medium hover:bg-accent-primary/20 transition-colors">Düzenle</a>
+                    <button onclick={`if(confirm('Programı silmek istiyor musun?')) { fetch('/api/programs/${program.id}', {method:'DELETE'}).then(r => r.ok ? location.reload() : alert('Hata')) }`} class="px-3 py-1.5 rounded-lg bg-accent-red/10 text-accent-red text-xs font-medium hover:bg-accent-red/20 transition-colors">Sil</button>
+                  </>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div class="text-center py-16">
+          <div class="w-20 h-20 rounded-3xl bg-bg-tertiary flex items-center justify-center mx-auto mb-6">
+            <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="text-text-muted"><path d="m6.5 6.5 11 11"/><path d="m21 21-1-1"/><path d="m3 3 1 1"/><path d="m18 22 4-4"/><path d="m2 6 4-4"/><path d="m3 10 7-7"/><path d="m14 21 7-7"/></svg>
+          </div>
+          <h3 class="text-xl font-bold text-text-primary mb-2">Henüz program yok</h3>
+          <p class="text-text-secondary mb-6 max-w-md mx-auto">
+             {userIsCoach ? 'Öğrenci detay sayfasından program oluşturabilirsiniz.' : 'Eğitmeniniz size bir antrenman programı atadığında burada görüntülenecek.'}
+          </p>
+          {userIsCoach && students.length > 0 && (
+            <a href={`/students/${students[0].id}/program/new`} class="btn-primary">İlk Programı Oluştur</a>
+          )}
+        </div>
+      )}
+    </div>
+  </div>
+</MainLayout>

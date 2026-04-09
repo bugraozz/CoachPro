@@ -1,0 +1,37 @@
+﻿---
+import MainLayout from '../../layouts/MainLayout.astro';
+import { getUserFromRequest } from '../../lib/auth';
+import prisma from '../../lib/prisma';
+import ChatInterface from '../../components/ChatInterface';
+
+const user = await getUserFromRequest(Astro.request);
+if (!user) return Astro.redirect('/auth/login');
+
+const { id } = Astro.params;
+if (!id) return Astro.redirect('/messages');
+
+const otherUser = await prisma.user.findUnique({
+  where: { id },
+  select: { id: true, name: true, photoUrl: true, role: true }
+});
+
+if (!otherUser) {
+  return Astro.redirect('/messages');
+}
+---
+
+<MainLayout title={`Mesajlar - ${otherUser.name}`} activePage="messages">
+  <div class="h-dvh w-full min-h-0">
+    <ChatInterface
+      client:load
+      currentUserId={user.id}
+      currentUserRole={user.role}
+      otherUserId={otherUser.id}
+      otherUserName={otherUser.name}
+      otherUserPhotoUrl={otherUser.photoUrl}
+      otherUserRole={otherUser.role}
+      showBackButton={true}
+      backHref="/messages"
+    />
+  </div>
+</MainLayout>

@@ -1,0 +1,1541 @@
+---
+import MainLayout from '../../layouts/MainLayout.astro';
+import { getUserFromRequest, isBackofficeUser, isCoach } from '../../lib/auth';
+import { retrieveSubMerchant } from '../../lib/iyzico';
+import { normalizeIban, normalizeIdentityNumber, syncCoachSubMerchant, validateCoachPayoutInput } from '../../lib/iyzico-marketplace';
+import prisma from '../../lib/prisma';
+import { getCoachStudentPackageDiscount, setCoachStudentPackageDiscount } from '../../lib/pricing';
+
+const user = await getUserFromRequest(Astro.request);
+
+if (!user) {
+  return Astro.redirect('/auth/login');
+}
+
+const userIsCoach = isCoach(user);
+const userIsBackoffice = isBackofficeUser(user);
+let coachPackages: any[] = [];
+let paymentHistory: any[] = [];
+let backofficeCoaches: any[] = [];
+let backofficeFailedTransactions: any[] = [];
+let coachReferralDiscount: {
+  enabled: boolean;
+  amount: number;
+  updatedAt: string | null;
+  updatedBy: string | null;
+} = { enabled: false, amount: 0, updatedAt: null, updatedBy: null };
+const payoutSaved = Astro.url.searchParams.get('payoutSaved') === '1';
+const payoutError = (Astro.url.searchParams.get('payoutError') || '').trim();
+const discountSaved = Astro.url.searchParams.get('discountSaved') === '1';
+const discountError = (Astro.url.searchParams.get('discountError') || '').trim();
+
+const extractFailureReason = (metadata: unknown): string => {
+  if (!metadata || typeof metadata !== 'object') {
+    return 'Bilinmeyen hata';
+  }
+
+  const map = metadata as Record<string, unknown>;
+  const candidates = [
+    map.failureReason,
+    map.checkoutError,
+    map.error,
+    map.marketplaceFallbackReason,
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+
+  return 'Bilinmeyen hata';
+};
+
+if (userIsCoach && Astro.request.method === 'POST') {
+  const formData = await Astro.request.formData();
+  const action = (formData.get('action') as string || '').trim();
+
+  if (action === 'save_payout_profile') {
+    const subMerchantType = (formData.get('subMerchantType') as string || 'PERSONAL').trim();
+    const identityNumber = (formData.get('identityNumber') as string || '').trim();
+    const iban = (formData.get('iban') as string || '').trim();
+    const contactPhone = (formData.get('contactPhone') as string || '').trim();
+    const address = (formData.get('address') as string || '').trim();
+    const city = (formData.get('city') as string || '').trim();
+    const zipCode = (formData.get('zipCode') as string || '').trim();
+    const taxOffice = (formData.get('taxOffice') as string || '').trim();
+    const legalCompanyTitle = (formData.get('legalCompanyTitle') as string || '').trim();
+    const manualSubMerchantKey = (formData.get('manualSubMerchantKey') as string || '').trim();
+    const manualSubMerchantExternalId = (formData.get('manualSubMerchantExternalId') as string || '').trim();
+
+    const validationError = validateCoachPayoutInput({
+      subMerchantType,
+      identityNumber,
+      iban,
+      address,
+      city,
+      zipCode,
+      taxOffice: taxOffice || null,
+      legalCompanyTitle: legalCompanyTitle || null,
+    });
+
+    if (validationError) {
+      return Astro.redirect(`/settings?tab=account&payoutError=${encodeURIComponent(validationError)}`);
+    }
+
+    if (manualSubMerchantKey && !manualSubMerchantExternalId) {
+      return Astro.redirect('/settings?tab=account&payoutError=Manuel anahtar kullanimi icin SubMerchantExternalId zorunludur.');
+    }
+
+    let syncResult: {
+      ok: boolean;
+      error?: string;
+      subMerchantKey?: string;
+      subMerchantExternalId?: string;
+      subMerchantStatus?: string;
+    };
+
+    if (manualSubMerchantKey && manualSubMerchantExternalId) {
+      const retrieved = await retrieveSubMerchant({
+        locale: 'tr',
+        conversationId: `coach-manual-link-${user.id}`,
+        subMerchantExternalId: manualSubMerchantExternalId,
+      }).catch(() => null);
+
+      const retrievedStatus = String((retrieved as Record<string, unknown> | null)?.status || '').toLowerCase();
+      const retrievedSubMerchantKey = String((retrieved as Record<string, unknown> | null)?.subMerchantKey || '').trim();
+
+      if (!retrieved || retrievedStatus !== 'success') {
+        syncResult = {
+          ok: false,
+          error: String((retrieved as Record<string, unknown> | null)?.errorMessage || 'Alt uye isyeri bilgisi dogrulanamadi.'),
+        };
+      } else if (retrievedSubMerchantKey && retrievedSubMerchantKey !== manualSubMerchantKey) {
+        syncResult = {
+          ok: false,
+          error: 'Girilen SubMerchantKey, verilen external id ile eslesmiyor.',
+        };
+      } else {
+        syncResult = {
+          ok: true,
+          subMerchantKey: manualSubMerchantKey,
+          subMerchantExternalId: manualSubMerchantExternalId,
+          subMerchantStatus: String((retrieved as Record<string, unknown> | null)?.subMerchantStatus || 'active'),
+        };
+      }
+    } else {
+      syncResult = await syncCoachSubMerchant({
+        coachId: user.id,
+        email: user.email,
+        phone: contactPhone || user.phone,
+        fullName: user.name,
+        subMerchantType: subMerchantType === 'PRIVATE_COMPANY' ? 'PRIVATE_COMPANY' : 'PERSONAL',
+        identityNumber,
+        iban,
+        address,
+        city,
+        zipCode,
+        taxOffice: taxOffice || null,
+        legalCompanyTitle: legalCompanyTitle || null,
+        existingSubMerchantKey: user.iyzicoSubMerchantKey || null,
+        existingExternalId: user.iyzicoSubMerchantExternalId || null,
+      });
+    }
+
+    if (!syncResult.ok || !syncResult.subMerchantKey) {
+      await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          iyzicoSubMerchantType: subMerchantType,
+          iyzicoIdentityNumber: normalizeIdentityNumber(identityNumber),
+          iyzicoIban: normalizeIban(iban),
+          iyzicoAddress: address,
+          iyzicoCity: city,
+          iyzicoZipCode: zipCode,
+          iyzicoTaxOffice: taxOffice || null,
+          iyzicoLegalCompanyTitle: legalCompanyTitle || null,
+          iyzicoLastError: syncResult.error || 'Iyzico senkronizasyon hatasi.',
+          iyzicoLastSyncAt: new Date(),
+          phone: contactPhone || user.phone,
+        },
+      });
+
+      return Astro.redirect(`/settings?tab=account&payoutError=${encodeURIComponent(syncResult.error || 'Iyzico kaydi olusturulamadi.')}`);
+    }
+
+    const nameParts = user.name.trim().split(/\s+/).filter(Boolean);
+    const contactName = nameParts[0] || 'Coach';
+    const contactSurname = nameParts.length > 1 ? nameParts.slice(1).join(' ') : 'User';
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        phone: contactPhone || user.phone,
+        iyzicoSubMerchantType: subMerchantType,
+        iyzicoIdentityNumber: normalizeIdentityNumber(identityNumber),
+        iyzicoIban: normalizeIban(iban),
+        iyzicoAddress: address,
+        iyzicoCity: city,
+        iyzicoZipCode: zipCode,
+        iyzicoTaxOffice: taxOffice || null,
+        iyzicoLegalCompanyTitle: legalCompanyTitle || null,
+        iyzicoContactName: contactName,
+        iyzicoContactSurname: contactSurname,
+        iyzicoSubMerchantKey: syncResult.subMerchantKey,
+        iyzicoSubMerchantExternalId: syncResult.subMerchantExternalId || user.iyzicoSubMerchantExternalId || `coach_${user.id}`,
+        iyzicoSubMerchantStatus: syncResult.subMerchantStatus || 'active',
+        iyzicoPayoutReadyAt: new Date(),
+        iyzicoLastSyncAt: new Date(),
+        iyzicoLastError: null,
+      },
+    });
+
+    return Astro.redirect('/settings?tab=account&payoutSaved=1');
+  }
+
+  if (action === 'create_package') {
+    const name = (formData.get('name') as string || '').trim();
+    const description = (formData.get('description') as string || '').trim();
+    const price = parseInt((formData.get('price') as string || '0').trim(), 10);
+    const durationWeeks = parseInt((formData.get('durationWeeks') as string || '4').trim(), 10);
+
+    if (name && price > 0 && durationWeeks > 0) {
+      await prisma.coachPackage.create({
+        data: {
+          coachId: user.id,
+          name,
+          description: description || null,
+          price,
+          durationWeeks,
+          isActive: true,
+        },
+      });
+    }
+  }
+
+  if (action === 'save_referral_discount') {
+    const enabled = (formData.get('enabled') as string || '').trim() === 'true';
+    const amount = parseInt((formData.get('amount') as string || '0').trim(), 10);
+
+    if (Number.isNaN(amount) || amount < 0) {
+      return Astro.redirect('/settings?tab=account&discountError=Indirim%20tutari%20gecersiz.');
+    }
+
+    await setCoachStudentPackageDiscount(user.id, {
+      enabled,
+      amount,
+      updatedBy: user.id,
+    });
+
+    return Astro.redirect('/settings?tab=account&discountSaved=1');
+  }
+
+  if (action === 'toggle_package') {
+    const packageId = (formData.get('packageId') as string || '').trim();
+    const currentState = (formData.get('currentState') as string || '').trim();
+    const isCurrentlyActive = currentState === 'active';
+
+    if (packageId) {
+      await prisma.coachPackage.updateMany({
+        where: { id: packageId, coachId: user.id },
+        data: { isActive: !isCurrentlyActive },
+      });
+    }
+  }
+
+  if (action === 'update_package') {
+    const packageId = (formData.get('packageId') as string || '').trim();
+    const name = (formData.get('name') as string || '').trim();
+    const description = (formData.get('description') as string || '').trim();
+    const price = parseInt((formData.get('price') as string || '0').trim(), 10);
+    const durationWeeks = parseInt((formData.get('durationWeeks') as string || '0').trim(), 10);
+    const isActive = (formData.get('isActive') as string || '').trim() === 'true';
+
+    if (packageId && name && price > 0 && durationWeeks > 0) {
+      await prisma.coachPackage.updateMany({
+        where: { id: packageId, coachId: user.id },
+        data: {
+          name,
+          description: description || null,
+          price,
+          durationWeeks,
+          isActive,
+        },
+      });
+    }
+  }
+
+  if (action === 'delete_package') {
+    const packageId = (formData.get('packageId') as string || '').trim();
+
+    if (packageId) {
+      await prisma.coachPackage.deleteMany({
+        where: { id: packageId, coachId: user.id },
+      });
+    }
+  }
+
+  return Astro.redirect('/settings?tab=account');
+}
+
+if (userIsCoach) {
+  coachPackages = await prisma.coachPackage.findMany({
+    where: { coachId: user.id },
+    orderBy: [{ isActive: 'desc' }, { createdAt: 'desc' }],
+  });
+
+  coachReferralDiscount = await getCoachStudentPackageDiscount(user.id);
+}
+
+if (userIsBackoffice) {
+  backofficeCoaches = await prisma.user.findMany({
+    where: { role: 'coach' },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      subscriptionStatus: true,
+      iyzicoSubMerchantStatus: true,
+      iyzicoSubMerchantKey: true,
+      iyzicoPayoutReadyAt: true,
+      iyzicoLastSyncAt: true,
+      iyzicoLastError: true,
+      createdAt: true,
+    },
+    orderBy: { createdAt: 'desc' },
+    take: 150,
+  });
+
+  backofficeFailedTransactions = await prisma.paymentTransaction.findMany({
+    where: {
+      type: 'student_package',
+      status: 'failed',
+    },
+    select: {
+      id: true,
+      amount: true,
+      createdAt: true,
+      metadata: true,
+      payer: {
+        select: {
+          id: true,
+          name: true,
+          email: true,
+        },
+      },
+      coach: {
+        select: {
+          id: true,
+          name: true,
+          email: true,
+        },
+      },
+    },
+    orderBy: { createdAt: 'desc' },
+    take: 50,
+  });
+}
+
+paymentHistory = await prisma.paymentTransaction.findMany({
+  where: userIsCoach
+    ? {
+        OR: [{ payerId: user.id }, { coachId: user.id }],
+      }
+    : {
+        OR: [{ payerId: user.id }, { studentId: user.id }],
+      },
+  include: {
+    payer: {
+      select: {
+        id: true,
+        name: true,
+      },
+    },
+    student: {
+      select: {
+        id: true,
+        name: true,
+      },
+    },
+    coachPackage: {
+      select: {
+        id: true,
+        name: true,
+      },
+    },
+  },
+  orderBy: { createdAt: 'desc' },
+  take: 40,
+});
+
+const paymentSummary = paymentHistory.reduce(
+  (acc, payment) => {
+    acc.total += 1;
+
+    if (payment.status === 'paid') {
+      acc.paid += 1;
+      acc.revenue += Number(payment.amount || 0);
+    }
+
+    if (payment.status === 'failed') {
+      acc.failed += 1;
+      const metadata = typeof payment.metadata === 'object' && payment.metadata ? payment.metadata as Record<string, unknown> : null;
+      const reason = extractFailureReason(metadata);
+      acc.failureReasons[reason] = (acc.failureReasons[reason] || 0) + 1;
+    }
+
+    if (payment.status === 'pending') {
+      acc.pending += 1;
+    }
+
+    const metadata = typeof payment.metadata === 'object' && payment.metadata ? payment.metadata as Record<string, unknown> : null;
+    if (metadata && metadata.retryOfTransactionId) {
+      acc.retries += 1;
+    }
+
+    return acc;
+  },
+  {
+    total: 0,
+    paid: 0,
+    failed: 0,
+    pending: 0,
+    retries: 0,
+    revenue: 0,
+    failureReasons: {} as Record<string, number>,
+  },
+);
+
+const topFailureReasons = (Object.entries(paymentSummary.failureReasons) as Array<[string, number]>)
+  .sort((a, b) => b[1] - a[1])
+  .slice(0, 3);
+
+const backofficeSummary = backofficeCoaches.reduce(
+  (acc, coach) => {
+    acc.total += 1;
+    if (coach.iyzicoPayoutReadyAt) {
+      acc.payoutReady += 1;
+    } else {
+      acc.payoutMissing += 1;
+    }
+
+    if (coach.iyzicoLastError) {
+      acc.syncError += 1;
+      const reason = coach.iyzicoLastError.trim();
+      acc.errorReasons[reason] = (acc.errorReasons[reason] || 0) + 1;
+    }
+
+    if (coach.subscriptionStatus === 'active') {
+      acc.subscriptionActive += 1;
+    }
+
+    return acc;
+  },
+  {
+    total: 0,
+    payoutReady: 0,
+    payoutMissing: 0,
+    syncError: 0,
+    subscriptionActive: 0,
+    errorReasons: {} as Record<string, number>,
+  },
+);
+
+const topSyncErrorReasons = (Object.entries(backofficeSummary.errorReasons) as Array<[string, number]>)
+  .sort((a, b) => b[1] - a[1])
+  .slice(0, 5);
+
+const coachesMissingPayoutSetup = backofficeCoaches
+  .filter((coach) => !coach.iyzicoPayoutReadyAt)
+  .slice(0, 25);
+
+type MarketplaceActivationItem = {
+  coachId: string;
+  coachName: string;
+  coachEmail: string;
+  failedCount: number;
+  latestFailedAt: Date;
+  reason: string;
+};
+
+const marketplaceActivationQueue: MarketplaceActivationItem[] = (Object.values(
+  backofficeFailedTransactions.reduce((acc, tx) => {
+    const reason = extractFailureReason(tx.metadata).toLowerCase();
+    const metadata = typeof tx.metadata === 'object' && tx.metadata ? tx.metadata as Record<string, unknown> : null;
+    const isMarketplaceFallback =
+      reason.includes('submerchant') ||
+      Boolean(metadata && metadata.marketplaceFallbackUsed);
+
+    const coachId = tx.coach?.id;
+    if (!isMarketplaceFallback || !coachId) {
+      return acc;
+    }
+
+    if (!acc[coachId]) {
+      acc[coachId] = {
+        coachId,
+        coachName: tx.coach?.name || '-',
+        coachEmail: tx.coach?.email || '-',
+        failedCount: 0,
+        latestFailedAt: tx.createdAt,
+        reason: extractFailureReason(tx.metadata),
+      };
+    }
+
+    acc[coachId].failedCount += 1;
+    if (new Date(tx.createdAt) > new Date(acc[coachId].latestFailedAt)) {
+      acc[coachId].latestFailedAt = tx.createdAt;
+      acc[coachId].reason = extractFailureReason(tx.metadata);
+    }
+
+    return acc;
+  }, {} as Record<string, MarketplaceActivationItem>),
+) as MarketplaceActivationItem[])
+  .sort((a: MarketplaceActivationItem, b: MarketplaceActivationItem) => {
+    const failedDiff = b.failedCount - a.failedCount;
+    if (failedDiff !== 0) return failedDiff;
+    return new Date(b.latestFailedAt).getTime() - new Date(a.latestFailedAt).getTime();
+  })
+  .slice(0, 25);
+---
+
+<MainLayout title="Ayarlar" activePage="settings">
+  <!-- Header -->
+  <header class="px-6 lg:px-8 py-5 border-b border-border-default bg-bg-secondary/80 backdrop-blur-xl sticky top-0 z-50">
+    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+      <div>
+        <h1 class="text-2xl font-bold text-text-primary">Ayarlar</h1>
+        <p class="text-sm text-text-secondary mt-1">Hesap ve profil ayarlarınızı yönetin</p>
+      </div>
+    </div>
+  </header>
+
+  <div class="p-6 lg:p-8">
+    <!-- Tab Navigation -->
+    <div class="flex flex-wrap gap-1 p-1 rounded-xl bg-bg-secondary border border-border-default mb-8 max-w-2xl">
+      <button data-tab="profile" class="tab-btn active flex-1 py-2.5 px-4 rounded-lg text-sm font-medium transition-all">Profil</button>
+      <button data-tab="security" class="tab-btn flex-1 py-2.5 px-4 rounded-lg text-sm font-medium transition-all">Güvenlik</button>
+      <button data-tab="account" class="tab-btn flex-1 py-2.5 px-4 rounded-lg text-sm font-medium transition-all">Hesap</button>
+      {userIsBackoffice && <button data-tab="backoffice" class="tab-btn flex-1 py-2.5 px-4 rounded-lg text-sm font-medium transition-all">Backoffice</button>}
+    </div>
+
+    <!-- Profile Tab -->
+    <div id="tab-profile" class="tab-content">
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <!-- Profile Card -->
+        <div class="lg:col-span-1">
+          <div class="card text-center">
+            <div class="w-24 h-24 rounded-full bg-linear-to-br from-accent-purple to-accent-primary flex items-center justify-center text-3xl font-bold text-white mx-auto mb-4 shadow-lg">
+              {user.name.charAt(0).toUpperCase()}
+            </div>
+            <h3 class="text-lg font-semibold text-text-primary">{user.name}</h3>
+            <p class="text-sm text-text-muted mt-1">{user.email}</p>
+            <div class="mt-3">
+              <span class={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium ${userIsCoach ? 'bg-accent-primary/15 text-accent-primary' : 'bg-accent-cyan/15 text-accent-cyan'}`}>
+                <span class={`w-2 h-2 rounded-full ${userIsCoach ? 'bg-accent-primary' : 'bg-accent-cyan'}`}></span>
+                {userIsCoach ? 'Eğitmen' : 'Öğrenci'}
+              </span>
+            </div>
+            {userIsCoach && user.referralCode && (
+              <div class="mt-5 pt-5 border-t border-border-default">
+                <p class="text-xs text-text-muted uppercase tracking-wider mb-2">Referans Kodu</p>
+                <div class="flex items-center justify-center gap-2">
+                  <code class="text-lg font-bold font-mono text-accent-cyan tracking-widest">{user.referralCode}</code>
+                  <button onclick={`navigator.clipboard.writeText('${user.referralCode}'); showToast('Referans kodu kopyalandı')`} class="p-1.5 rounded-lg hover:bg-bg-tertiary transition-colors" title="Kopyala">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-text-muted"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+                  </button>
+                </div>
+              </div>
+            )}
+            <div class="mt-5 pt-5 border-t border-border-default text-left space-y-3">
+              <div class="flex items-center justify-between">
+                <span class="text-xs text-text-muted">Kayıt Tarihi</span>
+                <span class="text-sm text-text-secondary">{new Date(user.createdAt).toLocaleDateString('tr-TR')}</span>
+              </div>
+              {userIsCoach && (
+                <div class="flex items-center justify-between">
+                  <span class="text-xs text-text-muted">Abonelik</span>
+                  <span class={`text-sm font-medium ${user.subscriptionStatus === 'active' ? 'text-accent-green' : 'text-accent-red'}`}>
+                    {user.subscriptionStatus === 'active' ? 'Aktif' : 'Pasif'}
+                  </span>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <!-- Profile Form -->
+        <div class="lg:col-span-2">
+          <div class="card">
+            <h3 class="text-lg font-semibold text-text-primary mb-1">Kişisel Bilgiler</h3>
+            <p class="text-sm text-text-muted mb-6">Profil bilgilerinizi güncelleyin</p>
+
+            <form id="profileForm" class="space-y-5">
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-5">
+                <div>
+                  <label class="label block mb-2">Ad Soyad</label>
+                  <input type="text" name="name" value={user.name} class="input-field" required />
+                </div>
+                <div>
+                  <label class="label block mb-2">E-posta</label>
+                  <input type="email" value={user.email} class="input-field opacity-60 cursor-not-allowed" disabled />
+                  <p class="text-xs text-text-muted mt-1">E-posta değiştirilemez</p>
+                </div>
+              </div>
+
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-5">
+                <div>
+                  <label class="label block mb-2">Telefon</label>
+                  <input type="tel" name="phone" value={user.phone || ''} placeholder="05XX XXX XX XX" class="input-field" />
+                </div>
+                <div>
+                  <label class="label block mb-2">Cinsiyet</label>
+                  <select name="gender" class="input-field">
+                    <option value="">Seçiniz</option>
+                    <option value="male" selected={user.gender === 'male'}>Erkek</option>
+                    <option value="female" selected={user.gender === 'female'}>Kadın</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-5">
+                <div>
+                  <label class="label block mb-2">Yaş</label>
+                  <input type="number" name="age" value={user.age || ''} placeholder="25" min="10" max="100" class="input-field" />
+                </div>
+                <div>
+                  <label class="label block mb-2">Boy (cm)</label>
+                  <input type="number" name="height" value={user.height || ''} placeholder="175" step="0.1" class="input-field" />
+                </div>
+              </div>
+
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-5">
+                <div>
+                  <label class="label block mb-2">Mevcut Kilo (kg)</label>
+                  <input type="number" name="currentWeight" value={user.currentWeight || ''} placeholder="75" step="0.1" class="input-field" />
+                </div>
+                <div>
+                  <label class="label block mb-2">Hedef Kilo (kg)</label>
+                  <input type="number" name="targetWeight" value={user.targetWeight || ''} placeholder="70" step="0.1" class="input-field" />
+                </div>
+              </div>
+
+              <div>
+                <label class="label block mb-2">Sağlık Notları</label>
+                <textarea name="healthNotes" rows="3" placeholder="Varsa sağlık sorunları, alerjiler, sakatlıklar..." class="input-field resize-none">{user.healthNotes || ''}</textarea>
+              </div>
+
+              <div class="flex items-center justify-end gap-3 pt-2">
+                <div id="profileStatus" class="text-sm font-medium"></div>
+                <button type="submit" id="profileSaveBtn" class="btn-primary">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+                  Kaydet
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Security Tab -->
+    <div id="tab-security" class="tab-content hidden">
+      <div class="max-w-2xl">
+        <div class="card">
+          <h3 class="text-lg font-semibold text-text-primary mb-1">Şifre Değiştir</h3>
+          <p class="text-sm text-text-muted mb-6">Hesap güvenliğiniz için güçlü bir şifre kullanın</p>
+
+          <form id="passwordForm" class="space-y-5">
+            <div>
+              <label class="label block mb-2">Mevcut Şifre</label>
+              <div class="relative">
+                <input type="password" name="currentPassword" class="input-field pr-12" required placeholder="••••••••" />
+                <button type="button" class="toggle-password absolute right-3 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-primary transition-colors">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                </button>
+              </div>
+            </div>
+
+            <div>
+              <label class="label block mb-2">Yeni Şifre</label>
+              <div class="relative">
+                <input type="password" name="newPassword" class="input-field pr-12" required placeholder="••••••••" minlength="6" />
+                <button type="button" class="toggle-password absolute right-3 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-primary transition-colors">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                </button>
+              </div>
+              <div id="passwordStrength" class="mt-2 hidden">
+                <div class="flex gap-1 mb-1">
+                  <div class="h-1 flex-1 rounded-full bg-bg-tertiary" id="str1"></div>
+                  <div class="h-1 flex-1 rounded-full bg-bg-tertiary" id="str2"></div>
+                  <div class="h-1 flex-1 rounded-full bg-bg-tertiary" id="str3"></div>
+                  <div class="h-1 flex-1 rounded-full bg-bg-tertiary" id="str4"></div>
+                </div>
+                <p id="strengthText" class="text-xs text-text-muted"></p>
+              </div>
+            </div>
+
+            <div>
+              <label class="label block mb-2">Yeni Şifre (Tekrar)</label>
+              <input type="password" name="confirmPassword" class="input-field" required placeholder="••••••••" minlength="6" />
+            </div>
+
+            <div class="flex items-center justify-end gap-3 pt-2">
+              <div id="passwordStatus" class="text-sm font-medium"></div>
+              <button type="submit" id="passwordSaveBtn" class="btn-primary">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                Şifre Değiştir
+              </button>
+            </div>
+          </form>
+        </div>
+
+        <div class="card mt-6">
+          <h3 class="text-lg font-semibold text-text-primary mb-1">Oturum Bilgileri</h3>
+          <p class="text-sm text-text-muted mb-4">Aktif oturum bilgileriniz</p>
+          <div class="flex items-center gap-4 p-4 rounded-xl bg-bg-tertiary/50 border border-border-default">
+            <div class="w-10 h-10 rounded-xl bg-accent-green/15 flex items-center justify-center shrink-0">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-accent-green"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>
+            </div>
+            <div class="flex-1 min-w-0">
+              <div class="text-sm font-medium text-text-primary">Mevcut Cihaz</div>
+              <div class="text-xs text-text-muted">Şu an aktif oturum</div>
+            </div>
+            <span class="inline-flex items-center gap-1.5 text-xs font-medium text-accent-green">
+              <span class="w-2 h-2 rounded-full bg-accent-green animate-pulse"></span>
+              Aktif
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Account Tab -->
+    <div id="tab-account" class="tab-content hidden">
+      <div class="max-w-2xl space-y-6">
+        <div class="card">
+          <h3 class="text-lg font-semibold text-text-primary mb-1">Hesap Bilgileri</h3>
+          <p class="text-sm text-text-muted mb-6">Hesabınızla ilgili genel bilgiler</p>
+          
+          <div class="space-y-4">
+            <div class="flex items-center justify-between py-3 border-b border-border-default/50">
+              <div>
+                <span class="text-sm font-medium text-text-primary">Hesap Türü</span>
+                <p class="text-xs text-text-muted mt-0.5">{userIsCoach ? 'Eğitmen hesabı' : 'Öğrenci hesabı'}</p>
+              </div>
+              <span class={`badge ${userIsCoach ? 'badge-success' : ''}`} style={userIsCoach ? '' : 'background:rgba(6,182,212,0.15);color:var(--color-accent-cyan);border:1px solid rgba(6,182,212,0.2)'}>
+                {userIsCoach ? 'Eğitmen' : 'Öğrenci'}
+              </span>
+            </div>
+
+            <div class="flex items-center justify-between py-3 border-b border-border-default/50">
+              <div>
+                <span class="text-sm font-medium text-text-primary">E-posta Adresi</span>
+                <p class="text-xs text-text-muted mt-0.5">{user.email}</p>
+              </div>
+              <span class="badge badge-success">Doğrulanmış</span>
+            </div>
+
+            <div class="flex items-center justify-between py-3 border-b border-border-default/50">
+              <div>
+                <span class="text-sm font-medium text-text-primary">Hesap Durumu</span>
+                <p class="text-xs text-text-muted mt-0.5">Hesabınız aktif durumda</p>
+              </div>
+              <span class="inline-flex items-center gap-1.5 text-xs font-medium text-accent-green">
+                <span class="w-2 h-2 rounded-full bg-accent-green"></span>
+                Aktif
+              </span>
+            </div>
+
+            {userIsCoach && (
+              <div class="flex items-center justify-between py-3 border-b border-border-default/50">
+                <div>
+                  <span class="text-sm font-medium text-text-primary">Abonelik Durumu</span>
+                  <p class="text-xs text-text-muted mt-0.5">
+                    {user.subscriptionStatus === 'active' 
+                      ? `Aktif - ${user.subscriptionEnd ? new Date(user.subscriptionEnd).toLocaleDateString('tr-TR') + ' tarihine kadar' : 'Süresiz'}` 
+                      : 'Abonelik aktif değil'}
+                  </p>
+                </div>
+                <span class={`badge ${user.subscriptionStatus === 'active' ? 'badge-success' : ''}`} style={user.subscriptionStatus !== 'active' ? 'background:rgba(239,68,68,0.15);color:var(--color-accent-red);border:1px solid rgba(239,68,68,0.2)' : ''}>
+                  {user.subscriptionStatus === 'active' ? 'Aktif' : 'Pasif'}
+                </span>
+              </div>
+            )}
+
+            {!userIsCoach && user.coachId && (
+              <div class="flex items-center justify-between py-3">
+                <div>
+                  <span class="text-sm font-medium text-text-primary">Eğitmen</span>
+                  <p class="text-xs text-text-muted mt-0.5">Bağlı olduğunuz eğitmen</p>
+                </div>
+                <span class="text-sm font-medium text-accent-primary">Bağlı</span>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {userIsCoach && (
+          <div class="card">
+            <h3 class="text-lg font-semibold text-text-primary mb-1">Iyzico Odeme Hesabi</h3>
+            <p class="text-sm text-text-muted mb-6">Ogrenci odemelerinin dogrudan hesabiniza aktarilmasi icin bu bilgileri doldurun.</p>
+
+            {payoutSaved && (
+              <div class="mb-5 p-4 rounded-lg bg-accent-green/10 border border-accent-green/20 text-accent-green text-sm">
+                Odeme hesabi basariyla senkronize edildi. Ogrenci odemeleri artik dogrudan egitmen hesabina aktarilabilir.
+              </div>
+            )}
+
+            {payoutError && (
+              <div class="mb-5 p-4 rounded-lg bg-accent-red/10 border border-accent-red/20 text-accent-red text-sm">
+                {payoutError}
+              </div>
+            )}
+
+            <div class="mb-5 p-4 rounded-xl border border-border-default bg-bg-tertiary/20 flex items-center justify-between gap-4">
+              <div>
+                <p class="text-sm font-medium text-text-primary">Odeme Yonetimi Durumu</p>
+                <p class="text-xs text-text-muted mt-1">
+                  {user.iyzicoPayoutReadyAt
+                    ? `Hazir - Son senkron: ${new Date(user.iyzicoPayoutReadyAt).toLocaleString('tr-TR')}`
+                    : 'Henuz tamamlanmadi'}
+                </p>
+                {user.iyzicoSubMerchantKey && (
+                  <p class="text-xs text-text-muted mt-1">SubMerchantKey: {user.iyzicoSubMerchantKey}</p>
+                )}
+                {user.iyzicoSubMerchantExternalId && (
+                  <p class="text-xs text-text-muted mt-1">ExternalId: {user.iyzicoSubMerchantExternalId}</p>
+                )}
+              </div>
+              <span
+                class={`badge ${user.iyzicoPayoutReadyAt ? 'badge-success' : ''}`}
+                style={user.iyzicoPayoutReadyAt ? '' : 'background:rgba(239,68,68,0.15);color:var(--color-accent-red);border:1px solid rgba(239,68,68,0.2)'}
+              >
+                {user.iyzicoPayoutReadyAt ? 'Hazir' : 'Eksik'}
+              </span>
+            </div>
+
+            <form method="POST" class="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 rounded-xl bg-bg-tertiary/30 border border-border-default">
+              <input type="hidden" name="action" value="save_payout_profile" />
+
+              <div>
+                <label class="label block mb-2">Satici Tipi</label>
+                <select name="subMerchantType" class="input-field" required>
+                  <option value="PERSONAL" selected={user.iyzicoSubMerchantType !== 'PRIVATE_COMPANY'}>Bireysel</option>
+                  <option value="PRIVATE_COMPANY" selected={user.iyzicoSubMerchantType === 'PRIVATE_COMPANY'}>Sahis Sirketi</option>
+                </select>
+              </div>
+
+              <div class="md:col-span-2 rounded-lg border border-border-default bg-bg-secondary/30 p-3">
+                <p class="text-sm font-medium text-text-primary">Mevcut Alt Uye Isyeri Bilgileri (Opsiyonel)</p>
+                <p class="text-xs text-text-muted mt-1">
+                  Iyzico panelinde hazir bir alt uye isyeri anahtariniz varsa, asagidaki alanlari doldurarak dogrudan baglayabilirsiniz.
+                </p>
+              </div>
+
+              <div>
+                <label class="label block mb-2">SubMerchantKey (Opsiyonel)</label>
+                <input type="text" name="manualSubMerchantKey" class="input-field" placeholder="tjG7zZg6gbSMCLn..." />
+              </div>
+
+              <div>
+                <label class="label block mb-2">SubMerchantExternalId (Opsiyonel)</label>
+                <input type="text" name="manualSubMerchantExternalId" class="input-field" placeholder="1dbd6c5e-..." />
+              </div>
+
+              <div>
+                <label class="label block mb-2">Telefon</label>
+                <input type="tel" name="contactPhone" class="input-field" value={user.phone || ''} placeholder="05XX XXX XX XX" required />
+              </div>
+
+              <div>
+                <label class="label block mb-2">T.C. Kimlik No</label>
+                <input type="text" name="identityNumber" class="input-field" value={user.iyzicoIdentityNumber || ''} placeholder="11 haneli kimlik no" required />
+              </div>
+
+              <div>
+                <label class="label block mb-2">IBAN</label>
+                <input type="text" name="iban" class="input-field" value={user.iyzicoIban || ''} placeholder="TRXX XXXX XXXX XXXX XXXX XXXX XX" required />
+              </div>
+
+              <div class="md:col-span-2">
+                <label class="label block mb-2">Adres</label>
+                <textarea name="address" rows="2" class="input-field resize-none" placeholder="Acik adres" required>{user.iyzicoAddress || ''}</textarea>
+              </div>
+
+              <div>
+                <label class="label block mb-2">Sehir</label>
+                <input type="text" name="city" class="input-field" value={user.iyzicoCity || ''} placeholder="Istanbul" required />
+              </div>
+
+              <div>
+                <label class="label block mb-2">Posta Kodu</label>
+                <input type="text" name="zipCode" class="input-field" value={user.iyzicoZipCode || ''} placeholder="34000" required />
+              </div>
+
+              <div>
+                <label class="label block mb-2">Vergi Dairesi (Sirket icin)</label>
+                <input type="text" name="taxOffice" class="input-field" value={user.iyzicoTaxOffice || ''} placeholder="Opsiyonel" />
+              </div>
+
+              <div>
+                <label class="label block mb-2">Sirket Unvani (Sirket icin)</label>
+                <input type="text" name="legalCompanyTitle" class="input-field" value={user.iyzicoLegalCompanyTitle || ''} placeholder="Opsiyonel" />
+              </div>
+
+              <div class="md:col-span-2 flex justify-end">
+                <button type="submit" class="btn-primary">Iyzico Hesabini Senkronize Et</button>
+              </div>
+            </form>
+          </div>
+        )}
+
+        {userIsCoach && (
+          <div class="card">
+            <h3 class="text-lg font-semibold text-text-primary mb-1">Referans Indirimi</h3>
+            <p class="text-sm text-text-muted mb-6">Referans kodunuzla gelen ogrencilerin paket odemesinde sabit tutar indirimi uygulayin.</p>
+
+            {discountSaved && (
+              <div class="mb-5 p-4 rounded-lg bg-accent-green/10 border border-accent-green/20 text-accent-green text-sm">
+                Referans indirimi ayari guncellendi.
+              </div>
+            )}
+
+            {discountError && (
+              <div class="mb-5 p-4 rounded-lg bg-accent-red/10 border border-accent-red/20 text-accent-red text-sm">
+                {discountError}
+              </div>
+            )}
+
+            <div class="mb-4 p-4 rounded-xl border border-border-default bg-bg-tertiary/20">
+              <p class="text-sm text-text-secondary">
+                Mevcut durum:{' '}
+                <span class={`font-semibold ${coachReferralDiscount.enabled && coachReferralDiscount.amount > 0 ? 'text-accent-green' : 'text-text-primary'}`}>
+                  {coachReferralDiscount.enabled && coachReferralDiscount.amount > 0
+                    ? `Aktif (-₺${coachReferralDiscount.amount})`
+                    : 'Pasif'}
+                </span>
+              </p>
+            </div>
+
+            <form method="POST" class="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 rounded-xl bg-bg-tertiary/30 border border-border-default">
+              <input type="hidden" name="action" value="save_referral_discount" />
+
+              <div>
+                <label class="label block mb-2">Indirim Tutari (₺)</label>
+                <input
+                  type="number"
+                  name="amount"
+                  min="0"
+                  step="1"
+                  class="input-field"
+                  value={coachReferralDiscount.amount}
+                  required
+                />
+              </div>
+
+              <div>
+                <label class="label block mb-2">Durum</label>
+                <select name="enabled" class="input-field" required>
+                  <option value="true" selected={coachReferralDiscount.enabled}>Aktif</option>
+                  <option value="false" selected={!coachReferralDiscount.enabled}>Pasif</option>
+                </select>
+              </div>
+
+              <div class="md:col-span-2 flex justify-end">
+                <button type="submit" class="btn-primary">Referans Indirimini Kaydet</button>
+              </div>
+            </form>
+          </div>
+        )}
+
+        {userIsCoach && (
+          <div class="card">
+            <h3 class="text-lg font-semibold text-text-primary mb-1">Öğrenci Paketlerim</h3>
+            <p class="text-sm text-text-muted mb-6">Öğrencileriniz kayıt sonrası bu paketlerden birini seçerek ödeme yapar.</p>
+
+            <form method="POST" class="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 rounded-xl bg-bg-tertiary/30 border border-border-default mb-5">
+              <input type="hidden" name="action" value="create_package" />
+              <div class="md:col-span-2">
+                <label class="label block mb-2">Paket Adı</label>
+                <input type="text" name="name" class="input-field" placeholder="Örn: 8 Haftalık Dönüşüm Paketi" required />
+              </div>
+              <div>
+                <label class="label block mb-2">Fiyat (₺)</label>
+                <input type="number" name="price" min="1" step="1" class="input-field" placeholder="1500" required />
+              </div>
+              <div>
+                <label class="label block mb-2">Süre (Hafta)</label>
+                <input type="number" name="durationWeeks" min="1" step="1" class="input-field" value="4" required />
+              </div>
+              <div class="md:col-span-2">
+                <label class="label block mb-2">Açıklama</label>
+                <textarea name="description" rows="2" class="input-field resize-none" placeholder="Paket içeriği, görüşme sıklığı, destek türü..."></textarea>
+              </div>
+              <div class="md:col-span-2 flex justify-end">
+                <button type="submit" class="btn-primary">Paketi Ekle</button>
+              </div>
+            </form>
+
+            {coachPackages.length > 0 ? (
+              <div class="space-y-3">
+                {coachPackages.map((pkg) => (
+                  <div class="p-4 rounded-xl border border-border-default bg-bg-secondary/40">
+                    <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+                      <div>
+                        <div class="flex items-center gap-2 flex-wrap">
+                          <p class="font-semibold text-text-primary">{pkg.name}</p>
+                          <span class={`badge ${pkg.isActive ? 'badge-success' : ''}`} style={pkg.isActive ? '' : 'background:rgba(239,68,68,0.15);color:var(--color-accent-red);border:1px solid rgba(239,68,68,0.2)'}>
+                            {pkg.isActive ? 'Aktif' : 'Pasif'}
+                          </span>
+                        </div>
+                        <p class="text-sm text-text-secondary mt-1">₺{pkg.price} • {pkg.durationWeeks} hafta</p>
+                        {pkg.description && <p class="text-xs text-text-muted mt-2">{pkg.description}</p>}
+                      </div>
+                      <div class="flex items-center gap-2">
+                        <button
+                          type="button"
+                          class="btn-secondary text-xs toggle-edit-btn"
+                          data-edit-target={`edit-package-${pkg.id}`}
+                        >
+                          Duzenle
+                        </button>
+                        <form method="POST">
+                          <input type="hidden" name="action" value="toggle_package" />
+                          <input type="hidden" name="packageId" value={pkg.id} />
+                          <input type="hidden" name="currentState" value={pkg.isActive ? 'active' : 'passive'} />
+                          <button type="submit" class="btn-secondary text-xs">{pkg.isActive ? 'Pasifleştir' : 'Aktifleştir'}</button>
+                        </form>
+                        <form method="POST" onsubmit="return confirm('Bu paketi silmek istediğinize emin misiniz?')">
+                          <input type="hidden" name="action" value="delete_package" />
+                          <input type="hidden" name="packageId" value={pkg.id} />
+                          <button type="submit" class="px-3 py-2 rounded-lg text-xs font-medium bg-accent-red/10 text-accent-red border border-accent-red/20 hover:bg-accent-red/20 transition-colors">Sil</button>
+                        </form>
+                      </div>
+                    </div>
+
+                    <div id={`edit-package-${pkg.id}`} class="hidden mt-4 pt-4 border-t border-border-default/60">
+                      <form method="POST" class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <input type="hidden" name="action" value="update_package" />
+                        <input type="hidden" name="packageId" value={pkg.id} />
+                        <div class="md:col-span-2">
+                          <label class="label block mb-1">Paket Adi</label>
+                          <input type="text" name="name" value={pkg.name} class="input-field" required />
+                        </div>
+                        <div>
+                          <label class="label block mb-1">Fiyat (TL)</label>
+                          <input type="number" name="price" min="1" step="1" value={pkg.price} class="input-field" required />
+                        </div>
+                        <div>
+                          <label class="label block mb-1">Sure (Hafta)</label>
+                          <input type="number" name="durationWeeks" min="1" step="1" value={pkg.durationWeeks} class="input-field" required />
+                        </div>
+                        <div class="md:col-span-2">
+                          <label class="label block mb-1">Aciklama</label>
+                          <textarea name="description" rows="2" class="input-field resize-none">{pkg.description || ''}</textarea>
+                        </div>
+                        <div class="md:col-span-2 flex items-center justify-between">
+                          <label class="inline-flex items-center gap-2 text-sm text-text-secondary">
+                            <input type="checkbox" name="isActive" value="true" checked={pkg.isActive} class="accent-accent-primary" />
+                            Paket aktif kalsin
+                          </label>
+                          <button type="submit" class="btn-primary text-xs">Degisiklikleri Kaydet</button>
+                        </div>
+                      </form>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div class="p-4 rounded-xl bg-bg-tertiary/30 border border-border-default text-sm text-text-muted">
+                Henüz paket eklemediniz. Öğrencilerinizin kayıt sırasında seçim yapabilmesi için en az 1 aktif paket oluşturun.
+              </div>
+            )}
+          </div>
+        )}
+
+        <div class="card">
+          <h3 class="text-lg font-semibold text-text-primary mb-1">Odeme Gecmisi</h3>
+          <p class="text-sm text-text-muted mb-6">
+            {userIsCoach
+              ? 'Abonelik ve ogrenci odemeleri kayitlari'
+              : 'Hesabinizla ilgili tum odeme kayitlari'}
+          </p>
+
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 mb-6">
+            <div class="p-3 rounded-xl border border-border-default bg-bg-tertiary/30">
+              <p class="text-xs text-text-muted">Toplam Islem</p>
+              <p class="text-lg font-semibold text-text-primary mt-1">{paymentSummary.total}</p>
+            </div>
+            <div class="p-3 rounded-xl border border-border-default bg-accent-green/5">
+              <p class="text-xs text-text-muted">Basarili</p>
+              <p class="text-lg font-semibold text-accent-green mt-1">{paymentSummary.paid}</p>
+            </div>
+            <div class="p-3 rounded-xl border border-border-default bg-accent-red/5">
+              <p class="text-xs text-text-muted">Basarisiz</p>
+              <p class="text-lg font-semibold text-accent-red mt-1">{paymentSummary.failed}</p>
+            </div>
+            <div class="p-3 rounded-xl border border-border-default bg-accent-primary/5">
+              <p class="text-xs text-text-muted">Bekleyen</p>
+              <p class="text-lg font-semibold text-accent-primary mt-1">{paymentSummary.pending}</p>
+            </div>
+            <div class="p-3 rounded-xl border border-border-default bg-accent-cyan/5">
+              <p class="text-xs text-text-muted">Retry Sayisi</p>
+              <p class="text-lg font-semibold text-accent-cyan mt-1">{paymentSummary.retries}</p>
+            </div>
+          </div>
+
+          <div class="mb-6 p-4 rounded-xl border border-border-default bg-bg-tertiary/20">
+            <p class="text-sm text-text-secondary">
+              Toplam Tahsilat: <span class="font-semibold text-text-primary">₺{paymentSummary.revenue}</span>
+            </p>
+            {topFailureReasons.length > 0 ? (
+              <div class="mt-3">
+                <p class="text-xs text-text-muted mb-2">En Sık Hata Nedenleri</p>
+                <div class="flex flex-wrap gap-2">
+                  {topFailureReasons.map(([reason, count]) => (
+                    <span class="px-2 py-1 rounded-md text-xs bg-accent-red/10 border border-accent-red/20 text-accent-red">
+                      {reason} ({count})
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <p class="text-xs text-text-muted mt-2">Kayitli odeme hatasi bulunmuyor.</p>
+            )}
+          </div>
+
+          {paymentHistory.length > 0 ? (
+            <div class="overflow-x-auto">
+              <table class="w-full text-sm">
+                <thead>
+                  <tr class="border-b border-border-default/60">
+                    <th class="text-left py-3 px-2 text-xs uppercase tracking-wider text-text-muted">Tarih</th>
+                    <th class="text-left py-3 px-2 text-xs uppercase tracking-wider text-text-muted">Tip</th>
+                    <th class="text-left py-3 px-2 text-xs uppercase tracking-wider text-text-muted">Paket</th>
+                    {userIsCoach && <th class="text-left py-3 px-2 text-xs uppercase tracking-wider text-text-muted">Odeyen</th>}
+                    <th class="text-left py-3 px-2 text-xs uppercase tracking-wider text-text-muted">Tutar</th>
+                    <th class="text-left py-3 px-2 text-xs uppercase tracking-wider text-text-muted">Durum</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {paymentHistory.map((payment) => (
+                    <tr class="border-b border-border-default/40">
+                      <td class="py-3 px-2 text-text-secondary">{new Date(payment.createdAt).toLocaleString('tr-TR')}</td>
+                      <td class="py-3 px-2 text-text-secondary">
+                        {payment.type === 'coach_subscription' ? 'Koç Abonelik' : 'Ogrenci Paket'}
+                      </td>
+                      <td class="py-3 px-2 text-text-secondary">{payment.coachPackage?.name || 'Abonelik'}</td>
+                      {userIsCoach && (
+                        <td class="py-3 px-2 text-text-secondary">{payment.payer?.name || '-'}</td>
+                      )}
+                      <td class="py-3 px-2 font-medium text-text-primary">₺{payment.amount}</td>
+                      <td class="py-3 px-2">
+                        <span
+                          class={`badge ${payment.status === 'paid' ? 'badge-success' : ''}`}
+                          style={payment.status === 'paid' ? '' : 'background:rgba(239,68,68,0.15);color:var(--color-accent-red);border:1px solid rgba(239,68,68,0.2)'}
+                        >
+                          {payment.status === 'paid' ? 'Basarili' : payment.status === 'pending' ? 'Bekliyor' : 'Basarisiz'}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div class="p-4 rounded-xl bg-bg-tertiary/30 border border-border-default text-sm text-text-muted">
+              Henuz kayitli bir odeme islemi bulunmuyor.
+            </div>
+          )}
+        </div>
+
+        <!-- Danger Zone -->
+        <div class="card border-accent-red/20">
+          <h3 class="text-lg font-semibold text-accent-red mb-1">Tehlikeli Bölge</h3>
+          <p class="text-sm text-text-muted mb-6">Bu işlemler geri alınamaz</p>
+          
+          <div class="flex items-center justify-between p-4 rounded-xl bg-accent-red/5 border border-accent-red/10">
+            <div>
+              <span class="text-sm font-medium text-text-primary">Hesabı Sil</span>
+              <p class="text-xs text-text-muted mt-0.5">Tüm verileriniz kalıcı olarak silinir</p>
+            </div>
+            <button class="px-4 py-2 rounded-lg text-sm font-medium bg-accent-red/10 text-accent-red border border-accent-red/20 hover:bg-accent-red/20 transition-colors" onclick="alert('Bu özellik henüz aktif değil.')">
+              Hesabı Sil
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {userIsBackoffice && (
+      <div id="tab-backoffice" class="tab-content hidden">
+        <div class="space-y-6">
+          <div class="card">
+            <h3 class="text-lg font-semibold text-text-primary mb-1">Payout Onboarding Durumu</h3>
+            <p class="text-sm text-text-muted mb-6">Tum egitmenlerin Iyzico payout hazirlik ve senkronizasyon durumlari.</p>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
+              <div class="p-3 rounded-xl border border-border-default bg-bg-tertiary/30">
+                <p class="text-xs text-text-muted">Toplam Egitmen</p>
+                <p class="text-lg font-semibold text-text-primary mt-1">{backofficeSummary.total}</p>
+              </div>
+              <div class="p-3 rounded-xl border border-border-default bg-accent-green/5">
+                <p class="text-xs text-text-muted">Payout Hazir</p>
+                <p class="text-lg font-semibold text-accent-green mt-1">{backofficeSummary.payoutReady}</p>
+              </div>
+              <div class="p-3 rounded-xl border border-border-default bg-accent-red/5">
+                <p class="text-xs text-text-muted">Payout Eksik</p>
+                <p class="text-lg font-semibold text-accent-red mt-1">{backofficeSummary.payoutMissing}</p>
+              </div>
+              <div class="p-3 rounded-xl border border-border-default bg-accent-orange/5">
+                <p class="text-xs text-text-muted">Senkron Hatasi</p>
+                <p class="text-lg font-semibold text-accent-orange mt-1">{backofficeSummary.syncError}</p>
+              </div>
+            </div>
+
+            {topSyncErrorReasons.length > 0 ? (
+              <div class="mb-6 p-4 rounded-xl border border-border-default bg-bg-tertiary/20">
+                <p class="text-xs text-text-muted mb-2">En Sik Senkronizasyon Hata Nedenleri</p>
+                <div class="flex flex-wrap gap-2">
+                  {topSyncErrorReasons.map(([reason, count]) => (
+                    <span class="px-2 py-1 rounded-md text-xs bg-accent-red/10 border border-accent-red/20 text-accent-red">
+                      {reason} ({count})
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div class="mb-6 p-4 rounded-xl border border-border-default bg-accent-green/5 text-sm text-text-secondary">
+                Kayitli payout senkron hatasi bulunmuyor.
+              </div>
+            )}
+
+            <div class="mb-6 p-4 rounded-xl border border-border-default bg-bg-tertiary/20">
+              <div class="flex items-center justify-between gap-3 mb-3">
+                <p class="text-sm font-semibold text-text-primary">Operasyon Aksiyon Listesi</p>
+                <span class="text-xs text-text-muted">
+                  Toplam aksiyon: {coachesMissingPayoutSetup.length + marketplaceActivationQueue.length}
+                </span>
+              </div>
+
+              <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <div class="p-3 rounded-lg border border-accent-red/20 bg-accent-red/5">
+                  <p class="text-xs uppercase tracking-wider text-accent-red mb-2">Payout Setup Eksik</p>
+                  {coachesMissingPayoutSetup.length > 0 ? (
+                    <div class="space-y-2 max-h-52 overflow-y-auto pr-1">
+                      {coachesMissingPayoutSetup.map((coach) => (
+                        <div class="text-xs text-text-secondary border border-border-default rounded-md px-2 py-2 bg-bg-secondary/40">
+                          <p class="font-medium text-text-primary">{coach.name}</p>
+                          <p>{coach.email}</p>
+                          <p class="text-text-muted mt-1">Aksiyon: IBAN/KYC formunu tamamlat ve Iyzico senkronunu yenile.</p>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p class="text-xs text-text-secondary">Payout setup bekleyen egitmen yok.</p>
+                  )}
+                </div>
+
+                <div class="p-3 rounded-lg border border-accent-orange/20 bg-accent-orange/5">
+                  <p class="text-xs uppercase tracking-wider text-accent-orange mb-2">Marketplace Aktivasyon Kuyrugu</p>
+                  {marketplaceActivationQueue.length > 0 ? (
+                    <div class="space-y-2 max-h-52 overflow-y-auto pr-1">
+                      {marketplaceActivationQueue.map((item: MarketplaceActivationItem) => (
+                        <div class="text-xs text-text-secondary border border-border-default rounded-md px-2 py-2 bg-bg-secondary/40">
+                          <p class="font-medium text-text-primary">{item.coachName}</p>
+                          <p>{item.coachEmail}</p>
+                          <p class="mt-1">Fallback: {item.failedCount} odeme</p>
+                          <p class="text-text-muted">Son hata: {item.reason}</p>
+                          <p class="text-text-muted">Aksiyon: Iyzico hesabinda marketplace yetkisini actir.</p>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p class="text-xs text-text-secondary">Marketplace aktivasyon bekleyen kayit yok.</p>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {backofficeCoaches.length > 0 ? (
+              <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                  <thead>
+                    <tr class="border-b border-border-default/60">
+                      <th class="text-left py-3 px-2 text-xs uppercase tracking-wider text-text-muted">Egitmen</th>
+                      <th class="text-left py-3 px-2 text-xs uppercase tracking-wider text-text-muted">Abonelik</th>
+                      <th class="text-left py-3 px-2 text-xs uppercase tracking-wider text-text-muted">Payout</th>
+                      <th class="text-left py-3 px-2 text-xs uppercase tracking-wider text-text-muted">SubMerchant</th>
+                      <th class="text-left py-3 px-2 text-xs uppercase tracking-wider text-text-muted">Son Senkron</th>
+                      <th class="text-left py-3 px-2 text-xs uppercase tracking-wider text-text-muted">Son Hata</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {backofficeCoaches.map((coach) => (
+                      <tr class="border-b border-border-default/40 align-top">
+                        <td class="py-3 px-2 text-text-secondary">
+                          <div class="font-medium text-text-primary">{coach.name}</div>
+                          <div class="text-xs text-text-muted">{coach.email}</div>
+                        </td>
+                        <td class="py-3 px-2 text-text-secondary">{coach.subscriptionStatus || 'pending'}</td>
+                        <td class="py-3 px-2">
+                          <span
+                            class={`badge ${coach.iyzicoPayoutReadyAt ? 'badge-success' : ''}`}
+                            style={coach.iyzicoPayoutReadyAt ? '' : 'background:rgba(239,68,68,0.15);color:var(--color-accent-red);border:1px solid rgba(239,68,68,0.2)'}
+                          >
+                            {coach.iyzicoPayoutReadyAt ? 'Hazir' : 'Eksik'}
+                          </span>
+                        </td>
+                        <td class="py-3 px-2 text-text-secondary">{coach.iyzicoSubMerchantKey || '-'}</td>
+                        <td class="py-3 px-2 text-text-secondary">{coach.iyzicoLastSyncAt ? new Date(coach.iyzicoLastSyncAt).toLocaleString('tr-TR') : '-'}</td>
+                        <td class="py-3 px-2 text-xs text-accent-red max-w-sm wrap-break-word">{coach.iyzicoLastError || '-'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div class="p-4 rounded-xl bg-bg-tertiary/30 border border-border-default text-sm text-text-muted">
+                Backoffice listesi icin egitmen kaydi bulunmuyor.
+              </div>
+            )}
+          </div>
+
+          <div class="card">
+            <h3 class="text-lg font-semibold text-text-primary mb-1">Son Basarisiz Ogrenci Odemeleri</h3>
+            <p class="text-sm text-text-muted mb-6">Payout veya checkout kaynakli basarisiz ogrenci odeme denemeleri.</p>
+
+            {backofficeFailedTransactions.length > 0 ? (
+              <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                  <thead>
+                    <tr class="border-b border-border-default/60">
+                      <th class="text-left py-3 px-2 text-xs uppercase tracking-wider text-text-muted">Tarih</th>
+                      <th class="text-left py-3 px-2 text-xs uppercase tracking-wider text-text-muted">Ogrenci</th>
+                      <th class="text-left py-3 px-2 text-xs uppercase tracking-wider text-text-muted">Egitmen</th>
+                      <th class="text-left py-3 px-2 text-xs uppercase tracking-wider text-text-muted">Tutar</th>
+                      <th class="text-left py-3 px-2 text-xs uppercase tracking-wider text-text-muted">Hata Nedeni</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {backofficeFailedTransactions.map((tx) => (
+                      <tr class="border-b border-border-default/40 align-top">
+                        <td class="py-3 px-2 text-text-secondary">{new Date(tx.createdAt).toLocaleString('tr-TR')}</td>
+                        <td class="py-3 px-2 text-text-secondary">{tx.payer?.name || '-'}</td>
+                        <td class="py-3 px-2 text-text-secondary">{tx.coach?.name || '-'}</td>
+                        <td class="py-3 px-2 font-medium text-text-primary">₺{tx.amount}</td>
+                        <td class="py-3 px-2 text-xs text-accent-red max-w-sm wrap-break-word">{extractFailureReason(tx.metadata)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div class="p-4 rounded-xl bg-bg-tertiary/30 border border-border-default text-sm text-text-muted">
+                Son donemde basarisiz ogrenci odemesi kaydi bulunmuyor.
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    )}
+  </div>
+
+  <style>
+    .tab-btn {
+      color: var(--color-text-muted);
+    }
+    .tab-btn:hover {
+      color: var(--color-text-primary);
+      background-color: var(--color-bg-tertiary);
+    }
+    .tab-btn.active {
+      background-color: var(--color-accent-primary);
+      color: white;
+      box-shadow: var(--shadow-md);
+    }
+  </style>
+
+  <script is:inline>
+    // Tab navigation
+    const tabBtns = document.querySelectorAll('.tab-btn');
+    const tabContents = document.querySelectorAll('.tab-content');
+
+    function activateTab(tab) {
+      tabBtns.forEach(b => b.classList.remove('active'));
+      tabContents.forEach(c => c.classList.add('hidden'));
+
+      document.querySelector(`.tab-btn[data-tab="${tab}"]`)?.classList.add('active');
+      document.getElementById('tab-' + tab)?.classList.remove('hidden');
+    }
+
+    const tabFromQuery = new URLSearchParams(window.location.search).get('tab');
+    if (tabFromQuery && document.getElementById('tab-' + tabFromQuery)) {
+      activateTab(tabFromQuery);
+    }
+    
+    tabBtns.forEach(btn => {
+      btn.addEventListener('click', () => {
+        const tab = btn.dataset.tab;
+
+        activateTab(tab);
+
+        const url = new URL(window.location.href);
+        url.searchParams.set('tab', tab);
+        window.history.replaceState({}, '', url);
+      });
+    });
+
+    // Toggle password visibility
+    document.querySelectorAll('.toggle-password').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const input = btn.parentElement.querySelector('input');
+        if (input.type === 'password') {
+          input.type = 'text';
+        } else {
+          input.type = 'password';
+        }
+      });
+    });
+
+    // Toggle package edit forms
+    document.querySelectorAll('.toggle-edit-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const targetId = btn.getAttribute('data-edit-target');
+        const target = targetId ? document.getElementById(targetId) : null;
+        if (!target) return;
+
+        target.classList.toggle('hidden');
+      });
+    });
+
+    // Password strength meter
+    const newPasswordInput = document.querySelector('input[name="newPassword"]');
+    const strengthBar = document.getElementById('passwordStrength');
+    const strengthText = document.getElementById('strengthText');
+    const bars = [document.getElementById('str1'), document.getElementById('str2'), document.getElementById('str3'), document.getElementById('str4')];
+
+    newPasswordInput?.addEventListener('input', (e) => {
+      const val = e.target.value;
+      if (val.length === 0) {
+        strengthBar.classList.add('hidden');
+        return;
+      }
+      strengthBar.classList.remove('hidden');
+
+      let score = 0;
+      if (val.length >= 6) score++;
+      if (val.length >= 10) score++;
+      if (/[A-Z]/.test(val) && /[a-z]/.test(val)) score++;
+      if (/[0-9]/.test(val) || /[^A-Za-z0-9]/.test(val)) score++;
+
+      const colors = ['bg-accent-red', 'bg-accent-orange', 'bg-accent-yellow', 'bg-accent-green'];
+      const labels = ['Zayıf', 'Orta', 'İyi', 'Güçlü'];
+
+      bars.forEach((bar, i) => {
+        bar.className = 'h-1 flex-1 rounded-full transition-colors';
+        if (i < score) {
+          bar.classList.add(colors[score - 1]);
+        } else {
+          bar.classList.add('bg-bg-tertiary');
+        }
+      });
+      strengthText.textContent = labels[score - 1] || 'Çok zayıf';
+      strengthText.className = `text-xs ${score >= 3 ? 'text-accent-green' : score >= 2 ? 'text-accent-yellow' : 'text-accent-red'}`;
+    });
+
+    // Profile form submit
+    document.getElementById('profileForm')?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const form = e.target;
+      const btn = document.getElementById('profileSaveBtn');
+      const status = document.getElementById('profileStatus');
+      
+      btn.disabled = true;
+      btn.textContent = 'Kaydediliyor...';
+
+      const data = {
+        name: form.name.value,
+        phone: form.phone.value,
+        gender: form.gender.value,
+        age: form.age.value,
+        height: form.height.value,
+        currentWeight: form.currentWeight.value,
+        targetWeight: form.targetWeight.value,
+        healthNotes: form.healthNotes.value,
+      };
+
+      try {
+        const res = await fetch('/api/user/update-profile', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(data),
+        });
+
+        const result = await res.json();
+        
+        if (res.ok) {
+          status.textContent = 'Kaydedildi!';
+          status.className = 'text-sm font-medium text-accent-green';
+          if (typeof showToast === 'function') showToast('Profil güncellendi');
+          setTimeout(() => { status.textContent = ''; }, 3000);
+        } else {
+          status.textContent = result.error || 'Hata oluştu';
+          status.className = 'text-sm font-medium text-accent-red';
+        }
+      } catch (err) {
+        status.textContent = 'Bağlantı hatası';
+        status.className = 'text-sm font-medium text-accent-red';
+      }
+
+      btn.disabled = false;
+      btn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg> Kaydet`;
+    });
+
+    // Password form submit
+    document.getElementById('passwordForm')?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const form = e.target;
+      const btn = document.getElementById('passwordSaveBtn');
+      const status = document.getElementById('passwordStatus');
+      
+      btn.disabled = true;
+      btn.textContent = 'Değiştiriliyor...';
+
+      const data = {
+        currentPassword: form.currentPassword.value,
+        newPassword: form.newPassword.value,
+        confirmPassword: form.confirmPassword.value,
+      };
+
+      try {
+        const res = await fetch('/api/user/change-password', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(data),
+        });
+
+        const result = await res.json();
+
+        if (res.ok) {
+          status.textContent = 'Şifre değiştirildi!';
+          status.className = 'text-sm font-medium text-accent-green';
+          if (typeof showToast === 'function') showToast('Şifre başarıyla değiştirildi');
+          form.reset();
+          strengthBar.classList.add('hidden');
+          setTimeout(() => { status.textContent = ''; }, 3000);
+        } else {
+          status.textContent = result.error || 'Hata oluştu';
+          status.className = 'text-sm font-medium text-accent-red';
+        }
+      } catch (err) {
+        status.textContent = 'Bağlantı hatası';
+        status.className = 'text-sm font-medium text-accent-red';
+      }
+
+      btn.disabled = false;
+      btn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg> Şifre Değiştir`;
+    });
+  </script>
+</MainLayout>

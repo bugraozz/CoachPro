@@ -1,0 +1,658 @@
+---
+import MainLayout from '../../layouts/MainLayout.astro';
+import { getUserFromRequest, isBackofficeUser } from '../../lib/auth';
+import prisma from '../../lib/prisma';
+
+const user = await getUserFromRequest(Astro.request);
+
+if (!user) {
+  return Astro.redirect('/auth/login');
+}
+
+if (!isBackofficeUser(user)) {
+  return Astro.redirect('/dashboard');
+}
+
+const now = new Date();
+const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+const sevenDaysAgo = new Date(now);
+sevenDaysAgo.setDate(now.getDate() - 7);
+
+const extractFailureReason = (metadata: unknown): string => {
+  if (!metadata || typeof metadata !== 'object') {
+    return 'Bilinmeyen hata';
+  }
+
+  const map = metadata as Record<string, unknown>;
+  const candidates = [
+    map.failureReason,
+    map.checkoutError,
+    map.error,
+    map.marketplaceFallbackReason,
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+
+  return 'Bilinmeyen hata';
+};
+
+const [
+  totalUsers,
+  totalCoaches,
+  totalStudents,
+  activeCoaches,
+  paidStudents,
+  pendingStudents,
+  totalRevenueAgg,
+  monthRevenueAgg,
+  coachRevenueAgg,
+  studentRevenueAgg,
+  totalTransactions,
+  paidTransactions,
+  pendingTransactions,
+  failedTransactions,
+  failedAmountAgg,
+  payoutReadyCoaches,
+  payoutMissingCoaches,
+  newUsersLast7Days,
+  newStudentsLast7Days,
+  newCoachesLast7Days,
+  recentPaidTransactions,
+  recentFailedTransactions,
+  coaches,
+] = await Promise.all([
+  prisma.user.count(),
+  prisma.user.count({ where: { role: 'coach' } }),
+  prisma.user.count({ where: { role: 'student' } }),
+  prisma.user.count({ where: { role: 'coach', subscriptionStatus: 'active' } }),
+  prisma.user.count({ where: { role: 'student', studentPaymentStatus: 'paid' } }),
+  prisma.user.count({
+    where: {
+      role: 'student',
+      OR: [
+        { studentPaymentStatus: { not: 'paid' } },
+        { studentPaymentStatus: null },
+      ],
+    },
+  }),
+  prisma.paymentTransaction.aggregate({
+    where: { status: 'paid' },
+    _sum: { amount: true },
+  }),
+  prisma.paymentTransaction.aggregate({
+    where: {
+      status: 'paid',
+      paidAt: { gte: monthStart },
+    },
+    _sum: { amount: true },
+  }),
+  prisma.paymentTransaction.aggregate({
+    where: {
+      status: 'paid',
+      type: 'coach_subscription',
+    },
+    _sum: { amount: true },
+  }),
+  prisma.paymentTransaction.aggregate({
+    where: {
+      status: 'paid',
+      type: 'student_package',
+    },
+    _sum: { amount: true },
+  }),
+  prisma.paymentTransaction.count(),
+  prisma.paymentTransaction.count({ where: { status: 'paid' } }),
+  prisma.paymentTransaction.count({ where: { status: 'pending' } }),
+  prisma.paymentTransaction.count({ where: { status: 'failed' } }),
+  prisma.paymentTransaction.aggregate({
+    where: { status: 'failed' },
+    _sum: { amount: true },
+  }),
+  prisma.user.count({
+    where: {
+      role: 'coach',
+      iyzicoPayoutReadyAt: { not: null },
+    },
+  }),
+  prisma.user.count({
+    where: {
+      role: 'coach',
+      iyzicoPayoutReadyAt: null,
+    },
+  }),
+  prisma.user.count({
+    where: {
+      createdAt: { gte: sevenDaysAgo },
+    },
+  }),
+  prisma.user.count({
+    where: {
+      role: 'student',
+      createdAt: { gte: sevenDaysAgo },
+    },
+  }),
+  prisma.user.count({
+    where: {
+      role: 'coach',
+      createdAt: { gte: sevenDaysAgo },
+    },
+  }),
+  prisma.paymentTransaction.findMany({
+    where: { status: 'paid' },
+    include: {
+      payer: { select: { id: true, name: true, email: true } },
+      coach: { select: { id: true, name: true, email: true } },
+      student: { select: { id: true, name: true, email: true } },
+      coachPackage: { select: { id: true, name: true, durationWeeks: true } },
+    },
+    orderBy: { paidAt: 'desc' },
+    take: 40,
+  }),
+  prisma.paymentTransaction.findMany({
+    where: { status: 'failed' },
+    include: {
+      payer: { select: { id: true, name: true, email: true } },
+      coach: { select: { id: true, name: true, email: true } },
+      student: { select: { id: true, name: true, email: true } },
+      coachPackage: { select: { id: true, name: true, durationWeeks: true } },
+    },
+    orderBy: { failedAt: 'desc' },
+    take: 80,
+  }),
+  prisma.user.findMany({
+    where: { role: 'coach' },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      createdAt: true,
+      subscriptionStatus: true,
+      iyzicoPayoutReadyAt: true,
+      iyzicoLastError: true,
+      students: {
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          active: true,
+          createdAt: true,
+          studentPaymentStatus: true,
+          studentPaidAt: true,
+          selectedPackage: {
+            select: {
+              id: true,
+              name: true,
+              price: true,
+              durationWeeks: true,
+            },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+      },
+    },
+    orderBy: { createdAt: 'desc' },
+    take: 300,
+  }),
+]);
+
+const totalRevenue = Number(totalRevenueAgg._sum.amount || 0);
+const monthRevenue = Number(monthRevenueAgg._sum.amount || 0);
+const coachRevenue = Number(coachRevenueAgg._sum.amount || 0);
+const studentRevenue = Number(studentRevenueAgg._sum.amount || 0);
+const failedAmount = Number(failedAmountAgg._sum.amount || 0);
+const paymentSuccessRate = totalTransactions > 0
+  ? Math.round((paidTransactions / totalTransactions) * 100)
+  : 0;
+
+const coachRows = coaches.map((coach) => {
+  const paid = coach.students.filter((student) => student.studentPaymentStatus === 'paid').length;
+  const pending = coach.students.length - paid;
+  const newestStudent = coach.students[0] || null;
+
+  return {
+    ...coach,
+    paidStudents: paid,
+    pendingStudents: pending,
+    newestStudent,
+  };
+});
+
+const allStudents = coachRows
+  .flatMap((coach) =>
+    coach.students.map((student) => ({
+      ...student,
+      coachId: coach.id,
+      coachName: coach.name,
+      coachEmail: coach.email,
+      coachSubscriptionStatus: coach.subscriptionStatus,
+    })),
+  )
+  .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+const topFailureReasons = Object.entries(
+  recentFailedTransactions.reduce((acc: Record<string, number>, tx) => {
+    const reason = extractFailureReason(tx.metadata);
+    acc[reason] = (acc[reason] || 0) + 1;
+    return acc;
+  }, {}),
+)
+  .sort((a, b) => b[1] - a[1])
+  .slice(0, 6);
+
+const coachesMissingPayout = coachRows
+  .filter((coach) => !coach.iyzicoPayoutReadyAt)
+  .slice(0, 60);
+---
+
+<MainLayout title="Admin Paneli" activePage="admin">
+  <header class="px-6 lg:px-8 py-5 border-b border-border-default bg-bg-secondary/80 backdrop-blur-xl sticky top-0 z-50">
+    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+      <div>
+        <h1 class="text-2xl font-bold text-text-primary">Admin Paneli</h1>
+        <p class="text-sm text-text-secondary mt-1">Tum egitmen, ogrenci ve odeme operasyonlarini tek ekrandan yonetin</p>
+      </div>
+      <div class="flex items-center gap-3">
+        <a href="/admin/users" class="btn-secondary text-xs">Kullanici ve Indirim Yonetimi</a>
+        <div class="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-accent-primary/10 border border-accent-primary/20 text-accent-primary text-xs font-semibold">
+          Iyzico Sandbox Akisi Aktif
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <div class="p-6 lg:p-8 space-y-8">
+    <section class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-5">
+      <div class="card">
+        <p class="text-xs text-text-muted uppercase tracking-wider mb-2">Toplam Kullanici</p>
+        <p class="text-3xl font-bold text-text-primary">{totalUsers}</p>
+        <p class="text-xs text-text-muted mt-2">Egitmen + ogrenci toplam kayit</p>
+      </div>
+
+      <div class="card">
+        <p class="text-xs text-text-muted uppercase tracking-wider mb-2">Egitmen Sayisi</p>
+        <p class="text-3xl font-bold text-text-primary">{totalCoaches}</p>
+        <p class="text-xs text-text-muted mt-2">Aktif abonelik: {activeCoaches}</p>
+      </div>
+
+      <div class="card">
+        <p class="text-xs text-text-muted uppercase tracking-wider mb-2">Ogrenci Sayisi</p>
+        <p class="text-3xl font-bold text-text-primary">{totalStudents}</p>
+        <p class="text-xs text-text-muted mt-2">Odeme yapan: {paidStudents}</p>
+      </div>
+
+      <div class="card">
+        <p class="text-xs text-text-muted uppercase tracking-wider mb-2">Odeme Bekleyen Ogrenci</p>
+        <p class="text-3xl font-bold text-accent-red">{pendingStudents}</p>
+        <p class="text-xs text-text-muted mt-2">Kayitli ama henuz odemesi tamamlanmamis</p>
+      </div>
+
+      <div class="card">
+        <p class="text-xs text-text-muted uppercase tracking-wider mb-2">Toplam Ciro</p>
+        <p class="text-3xl font-bold text-accent-green">₺{totalRevenue.toLocaleString('tr-TR')}</p>
+        <p class="text-xs text-text-muted mt-2">Tum basarili odemeler</p>
+      </div>
+
+      <div class="card">
+        <p class="text-xs text-text-muted uppercase tracking-wider mb-2">Bu Ay Ciro</p>
+        <p class="text-3xl font-bold text-accent-primary">₺{monthRevenue.toLocaleString('tr-TR')}</p>
+        <p class="text-xs text-text-muted mt-2">{monthStart.toLocaleDateString('tr-TR')} tarihinden itibaren</p>
+      </div>
+
+      <div class="card">
+        <p class="text-xs text-text-muted uppercase tracking-wider mb-2">Egitmen Kayit Geliri</p>
+        <p class="text-3xl font-bold text-text-primary">₺{coachRevenue.toLocaleString('tr-TR')}</p>
+        <p class="text-xs text-text-muted mt-2">Coach subscription odemeleri</p>
+      </div>
+
+      <div class="card">
+        <p class="text-xs text-text-muted uppercase tracking-wider mb-2">Ogrenci Paket Geliri</p>
+        <p class="text-3xl font-bold text-text-primary">₺{studentRevenue.toLocaleString('tr-TR')}</p>
+        <p class="text-xs text-text-muted mt-2">Student package odemeleri</p>
+      </div>
+    </section>
+
+    <section class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-5">
+      <div class="card">
+        <p class="text-xs text-text-muted uppercase tracking-wider mb-2">Toplam Islem</p>
+        <p class="text-3xl font-bold text-text-primary">{totalTransactions}</p>
+        <p class="text-xs text-text-muted mt-2">Tum payment transaction kayitlari</p>
+      </div>
+
+      <div class="card">
+        <p class="text-xs text-text-muted uppercase tracking-wider mb-2">Basari Orani</p>
+        <p class="text-3xl font-bold text-accent-green">%{paymentSuccessRate}</p>
+        <p class="text-xs text-text-muted mt-2">Paid / tum islem oranı</p>
+      </div>
+
+      <div class="card">
+        <p class="text-xs text-text-muted uppercase tracking-wider mb-2">Basarisiz Islem</p>
+        <p class="text-3xl font-bold text-accent-red">{failedTransactions}</p>
+        <p class="text-xs text-text-muted mt-2">Toplam hata tutari: ₺{failedAmount.toLocaleString('tr-TR')}</p>
+      </div>
+
+      <div class="card">
+        <p class="text-xs text-text-muted uppercase tracking-wider mb-2">Payout Hazir Egitmen</p>
+        <p class="text-3xl font-bold text-accent-green">{payoutReadyCoaches}</p>
+        <p class="text-xs text-text-muted mt-2">Eksik payout profili: {payoutMissingCoaches}</p>
+      </div>
+
+      <div class="card">
+        <p class="text-xs text-text-muted uppercase tracking-wider mb-2">Son 7 Gun Kayit</p>
+        <p class="text-3xl font-bold text-accent-primary">{newUsersLast7Days}</p>
+        <p class="text-xs text-text-muted mt-2">Egitmen: {newCoachesLast7Days} • Ogrenci: {newStudentsLast7Days}</p>
+      </div>
+    </section>
+
+    <section class="grid grid-cols-1 xl:grid-cols-2 gap-5">
+      <div class="card">
+        <div class="mb-4">
+          <h2 class="text-lg font-semibold text-text-primary">Odeme Risk Ozetleri</h2>
+          <p class="text-sm text-text-muted mt-1">Hata dagilimi ve bekleyen islemler</p>
+        </div>
+
+        <div class="grid grid-cols-2 gap-3 mb-4">
+          <div class="rounded-lg border border-border-default bg-bg-tertiary/20 p-3">
+            <p class="text-xs text-text-muted">Pending Islem</p>
+            <p class="text-lg font-semibold text-accent-primary mt-1">{pendingTransactions}</p>
+          </div>
+          <div class="rounded-lg border border-border-default bg-bg-tertiary/20 p-3">
+            <p class="text-xs text-text-muted">Failed Islem</p>
+            <p class="text-lg font-semibold text-accent-red mt-1">{failedTransactions}</p>
+          </div>
+        </div>
+
+        {topFailureReasons.length > 0 ? (
+          <div>
+            <p class="text-xs text-text-muted mb-2">En SIk Hata Nedenleri</p>
+            <div class="flex flex-wrap gap-2">
+              {topFailureReasons.map(([reason, count]) => (
+                <span class="px-2 py-1 rounded-md text-xs bg-accent-red/10 border border-accent-red/20 text-accent-red">
+                  {reason} ({count})
+                </span>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <p class="text-sm text-text-muted">Kayitli odeme hatasi bulunmuyor.</p>
+        )}
+      </div>
+
+      <div class="card overflow-hidden">
+        <div class="mb-4">
+          <h2 class="text-lg font-semibold text-text-primary">Payout Eksik Egitmenler</h2>
+          <p class="text-sm text-text-muted mt-1">Ogrenci odemesi almadan once tamamlanmasi gereken hesaplar</p>
+        </div>
+
+        {coachesMissingPayout.length > 0 ? (
+          <div class="overflow-x-auto">
+            <table class="w-full min-w-160">
+              <thead>
+                <tr class="border-b border-border-default">
+                  <th class="text-left py-3 px-3 text-xs text-text-muted uppercase tracking-wider">Egitmen</th>
+                  <th class="text-left py-3 px-3 text-xs text-text-muted uppercase tracking-wider">Abonelik</th>
+                  <th class="text-left py-3 px-3 text-xs text-text-muted uppercase tracking-wider">Son Hata</th>
+                </tr>
+              </thead>
+              <tbody>
+                {coachesMissingPayout.map((coach) => (
+                  <tr class="border-b border-border-default/60 hover:bg-bg-tertiary/20">
+                    <td class="py-3 px-3 align-top">
+                      <p class="text-sm font-semibold text-text-primary">{coach.name}</p>
+                      <p class="text-xs text-text-muted mt-0.5">{coach.email}</p>
+                    </td>
+                    <td class="py-3 px-3 align-top">
+                      {coach.subscriptionStatus === 'active' ? (
+                        <span class="inline-flex px-2 py-1 rounded text-xs font-semibold bg-accent-green/15 text-accent-green">Aktif</span>
+                      ) : (
+                        <span class="inline-flex px-2 py-1 rounded text-xs font-semibold bg-accent-red/15 text-accent-red">Pasif</span>
+                      )}
+                    </td>
+                    <td class="py-3 px-3 align-top text-xs text-text-secondary">{coach.iyzicoLastError || '-'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p class="text-sm text-text-muted">Tum egitmenlerde payout profili hazir gorunuyor.</p>
+        )}
+      </div>
+    </section>
+
+    <section class="card overflow-hidden">
+      <div class="mb-5">
+        <h2 class="text-lg font-semibold text-text-primary">Egitmen Erisim Ozetleri</h2>
+        <p class="text-sm text-text-muted mt-1">Her egitmenin gorebildigi ogrenciler ve odeme durumlari</p>
+      </div>
+
+      {coachRows.length > 0 ? (
+        <div class="overflow-x-auto">
+          <table class="w-full min-w-230">
+            <thead>
+              <tr class="border-b border-border-default">
+                <th class="text-left py-3 px-3 text-xs text-text-muted uppercase tracking-wider">Egitmen</th>
+                <th class="text-left py-3 px-3 text-xs text-text-muted uppercase tracking-wider">Abonelik</th>
+                <th class="text-left py-3 px-3 text-xs text-text-muted uppercase tracking-wider">Payout</th>
+                <th class="text-left py-3 px-3 text-xs text-text-muted uppercase tracking-wider">Toplam Ogrenci</th>
+                <th class="text-left py-3 px-3 text-xs text-text-muted uppercase tracking-wider">Odeme Yapan</th>
+                <th class="text-left py-3 px-3 text-xs text-text-muted uppercase tracking-wider">Bekleyen</th>
+                <th class="text-left py-3 px-3 text-xs text-text-muted uppercase tracking-wider">Son Ogrenci</th>
+              </tr>
+            </thead>
+            <tbody>
+              {coachRows.map((coach) => (
+                <tr class="border-b border-border-default/60 hover:bg-bg-tertiary/20">
+                  <td class="py-3 px-3 align-top">
+                    <p class="text-sm font-semibold text-text-primary">{coach.name}</p>
+                    <p class="text-xs text-text-muted mt-0.5">{coach.email}</p>
+                  </td>
+                  <td class="py-3 px-3 align-top">
+                    {coach.subscriptionStatus === 'active' ? (
+                      <span class="inline-flex px-2 py-1 rounded text-xs font-semibold bg-accent-green/15 text-accent-green">Aktif</span>
+                    ) : (
+                      <span class="inline-flex px-2 py-1 rounded text-xs font-semibold bg-accent-red/15 text-accent-red">Pasif</span>
+                    )}
+                  </td>
+                  <td class="py-3 px-3 align-top">
+                    {coach.iyzicoPayoutReadyAt ? (
+                      <span class="inline-flex px-2 py-1 rounded text-xs font-semibold bg-accent-green/15 text-accent-green">Hazir</span>
+                    ) : (
+                      <span class="inline-flex px-2 py-1 rounded text-xs font-semibold bg-accent-orange/15 text-accent-orange">Eksik</span>
+                    )}
+                  </td>
+                  <td class="py-3 px-3 text-sm text-text-secondary align-top">{coach.students.length}</td>
+                  <td class="py-3 px-3 text-sm text-text-secondary align-top">{coach.paidStudents}</td>
+                  <td class="py-3 px-3 text-sm text-text-secondary align-top">{coach.pendingStudents}</td>
+                  <td class="py-3 px-3 align-top">
+                    {coach.newestStudent ? (
+                      <div>
+                        <p class="text-xs font-medium text-text-primary">{coach.newestStudent.name}</p>
+                        <p class="text-xs text-text-muted">{new Date(coach.newestStudent.createdAt).toLocaleDateString('tr-TR')}</p>
+                      </div>
+                    ) : (
+                      <span class="text-xs text-text-muted">-</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <p class="text-sm text-text-muted">Egitmen kaydi bulunamadi.</p>
+      )}
+    </section>
+
+    <section class="card overflow-hidden">
+      <div class="mb-5">
+        <h2 class="text-lg font-semibold text-text-primary">Tum Ogrenci Kayitlari</h2>
+        <p class="text-sm text-text-muted mt-1">Egitmen baglantisi, paket bilgisi ve odeme durumu</p>
+      </div>
+
+      {allStudents.length > 0 ? (
+        <div class="overflow-x-auto">
+          <table class="w-full min-w-245">
+            <thead>
+              <tr class="border-b border-border-default">
+                <th class="text-left py-3 px-3 text-xs text-text-muted uppercase tracking-wider">Ogrenci</th>
+                <th class="text-left py-3 px-3 text-xs text-text-muted uppercase tracking-wider">Egitmen</th>
+                <th class="text-left py-3 px-3 text-xs text-text-muted uppercase tracking-wider">Paket</th>
+                <th class="text-left py-3 px-3 text-xs text-text-muted uppercase tracking-wider">Odeme</th>
+                <th class="text-left py-3 px-3 text-xs text-text-muted uppercase tracking-wider">Hesap</th>
+                <th class="text-left py-3 px-3 text-xs text-text-muted uppercase tracking-wider">Kayit</th>
+              </tr>
+            </thead>
+            <tbody>
+              {allStudents.map((student) => (
+                <tr class="border-b border-border-default/60 hover:bg-bg-tertiary/20">
+                  <td class="py-3 px-3 align-top">
+                    <p class="text-sm font-semibold text-text-primary">{student.name}</p>
+                    <p class="text-xs text-text-muted mt-0.5">{student.email}</p>
+                  </td>
+                  <td class="py-3 px-3 align-top">
+                    <p class="text-sm text-text-primary">{student.coachName}</p>
+                    <p class="text-xs text-text-muted mt-0.5">{student.coachEmail}</p>
+                  </td>
+                  <td class="py-3 px-3 align-top">
+                    {student.selectedPackage ? (
+                      <div>
+                        <p class="text-sm text-text-primary">{student.selectedPackage.name}</p>
+                        <p class="text-xs text-text-muted mt-0.5">₺{student.selectedPackage.price} / {student.selectedPackage.durationWeeks} hafta</p>
+                      </div>
+                    ) : (
+                      <span class="text-xs text-text-muted">Secilmedi</span>
+                    )}
+                  </td>
+                  <td class="py-3 px-3 align-top">
+                    {student.studentPaymentStatus === 'paid' ? (
+                      <div>
+                        <span class="inline-flex px-2 py-1 rounded text-xs font-semibold bg-accent-green/15 text-accent-green">Odendi</span>
+                        {student.studentPaidAt && (
+                          <p class="text-xs text-text-muted mt-1">{new Date(student.studentPaidAt).toLocaleDateString('tr-TR')}</p>
+                        )}
+                      </div>
+                    ) : (
+                      <span class="inline-flex px-2 py-1 rounded text-xs font-semibold bg-accent-orange/15 text-accent-orange">Bekliyor</span>
+                    )}
+                  </td>
+                  <td class="py-3 px-3 align-top">
+                    {student.active ? (
+                      <span class="inline-flex px-2 py-1 rounded text-xs font-semibold bg-accent-green/15 text-accent-green">Aktif</span>
+                    ) : (
+                      <span class="inline-flex px-2 py-1 rounded text-xs font-semibold bg-accent-red/15 text-accent-red">Pasif</span>
+                    )}
+                  </td>
+                  <td class="py-3 px-3 text-sm text-text-secondary align-top">{new Date(student.createdAt).toLocaleDateString('tr-TR')}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <p class="text-sm text-text-muted">Ogrenci kaydi bulunamadi.</p>
+      )}
+    </section>
+
+    <section class="card overflow-hidden">
+      <div class="mb-5">
+        <h2 class="text-lg font-semibold text-text-primary">Son Basarili Odemeler</h2>
+        <p class="text-sm text-text-muted mt-1">Iyzico odemeleri (sandbox) son islemler</p>
+      </div>
+
+      {recentPaidTransactions.length > 0 ? (
+        <div class="overflow-x-auto">
+          <table class="w-full min-w-230">
+            <thead>
+              <tr class="border-b border-border-default">
+                <th class="text-left py-3 px-3 text-xs text-text-muted uppercase tracking-wider">Tip</th>
+                <th class="text-left py-3 px-3 text-xs text-text-muted uppercase tracking-wider">Odeme Yapan</th>
+                <th class="text-left py-3 px-3 text-xs text-text-muted uppercase tracking-wider">Egitmen</th>
+                <th class="text-left py-3 px-3 text-xs text-text-muted uppercase tracking-wider">Paket</th>
+                <th class="text-left py-3 px-3 text-xs text-text-muted uppercase tracking-wider">Tutar</th>
+                <th class="text-left py-3 px-3 text-xs text-text-muted uppercase tracking-wider">Tarih</th>
+              </tr>
+            </thead>
+            <tbody>
+              {recentPaidTransactions.map((tx) => (
+                <tr class="border-b border-border-default/60 hover:bg-bg-tertiary/20">
+                  <td class="py-3 px-3 align-top">
+                    <span class={`inline-flex px-2 py-1 rounded text-xs font-semibold ${tx.type === 'coach_subscription' ? 'bg-accent-primary/15 text-accent-primary' : 'bg-accent-cyan/15 text-accent-cyan'}`}>
+                      {tx.type === 'coach_subscription' ? 'Egitmen Kaydi' : 'Ogrenci Paketi'}
+                    </span>
+                  </td>
+                  <td class="py-3 px-3 align-top">
+                    <p class="text-sm text-text-primary">{tx.payer?.name || '-'}</p>
+                    <p class="text-xs text-text-muted mt-0.5">{tx.payer?.email || '-'}</p>
+                  </td>
+                  <td class="py-3 px-3 align-top">
+                    <p class="text-sm text-text-primary">{tx.coach?.name || '-'}</p>
+                    <p class="text-xs text-text-muted mt-0.5">{tx.coach?.email || '-'}</p>
+                  </td>
+                  <td class="py-3 px-3 align-top text-sm text-text-secondary">
+                    {tx.coachPackage?.name || (tx.type === 'coach_subscription' ? 'Aylik Plan' : '-')}
+                  </td>
+                  <td class="py-3 px-3 align-top text-sm font-semibold text-accent-green">₺{Number(tx.amount || 0).toLocaleString('tr-TR')}</td>
+                  <td class="py-3 px-3 align-top text-sm text-text-secondary">{new Date(tx.paidAt || tx.createdAt).toLocaleDateString('tr-TR')}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <p class="text-sm text-text-muted">Basarili odeme kaydi bulunamadi.</p>
+      )}
+    </section>
+
+    <section class="card overflow-hidden">
+      <div class="mb-5">
+        <h2 class="text-lg font-semibold text-text-primary">Son Basarisiz Odemeler</h2>
+        <p class="text-sm text-text-muted mt-1">Hata nedenlerini ve etkiledigi hesaplari izleyin</p>
+      </div>
+
+      {recentFailedTransactions.length > 0 ? (
+        <div class="overflow-x-auto">
+          <table class="w-full min-w-240">
+            <thead>
+              <tr class="border-b border-border-default">
+                <th class="text-left py-3 px-3 text-xs text-text-muted uppercase tracking-wider">Tip</th>
+                <th class="text-left py-3 px-3 text-xs text-text-muted uppercase tracking-wider">Odeme Yapan</th>
+                <th class="text-left py-3 px-3 text-xs text-text-muted uppercase tracking-wider">Egitmen</th>
+                <th class="text-left py-3 px-3 text-xs text-text-muted uppercase tracking-wider">Tutar</th>
+                <th class="text-left py-3 px-3 text-xs text-text-muted uppercase tracking-wider">Neden</th>
+                <th class="text-left py-3 px-3 text-xs text-text-muted uppercase tracking-wider">Tarih</th>
+              </tr>
+            </thead>
+            <tbody>
+              {recentFailedTransactions.map((tx) => (
+                <tr class="border-b border-border-default/60 hover:bg-bg-tertiary/20">
+                  <td class="py-3 px-3 align-top">
+                    <span class={`inline-flex px-2 py-1 rounded text-xs font-semibold ${tx.type === 'coach_subscription' ? 'bg-accent-primary/15 text-accent-primary' : 'bg-accent-cyan/15 text-accent-cyan'}`}>
+                      {tx.type === 'coach_subscription' ? 'Egitmen Kaydi' : 'Ogrenci Paketi'}
+                    </span>
+                  </td>
+                  <td class="py-3 px-3 align-top">
+                    <p class="text-sm text-text-primary">{tx.payer?.name || '-'}</p>
+                    <p class="text-xs text-text-muted mt-0.5">{tx.payer?.email || '-'}</p>
+                  </td>
+                  <td class="py-3 px-3 align-top">
+                    <p class="text-sm text-text-primary">{tx.coach?.name || '-'}</p>
+                    <p class="text-xs text-text-muted mt-0.5">{tx.coach?.email || '-'}</p>
+                  </td>
+                  <td class="py-3 px-3 align-top text-sm font-semibold text-accent-red">₺{Number(tx.amount || 0).toLocaleString('tr-TR')}</td>
+                  <td class="py-3 px-3 align-top text-xs text-text-secondary max-w-md">{extractFailureReason(tx.metadata)}</td>
+                  <td class="py-3 px-3 align-top text-sm text-text-secondary">{new Date(tx.failedAt || tx.createdAt).toLocaleDateString('tr-TR')}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <p class="text-sm text-text-muted">Basarisiz odeme kaydi bulunmuyor.</p>
+      )}
+    </section>
+  </div>
+</MainLayout>

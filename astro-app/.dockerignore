@@ -1,0 +1,8 @@
+node_modules
+.astro
+dist
+.git
+.gitignore
+push_output.txt
+*.log
+uploads

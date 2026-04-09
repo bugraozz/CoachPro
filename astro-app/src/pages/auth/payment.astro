@@ -1,0 +1,359 @@
+---
+import prisma from '../../lib/prisma';
+import { createSession, createSessionCookie } from '../../lib/auth';
+import {
+  calculateDiscountedAmount,
+  getCoachStudentPackageDiscount,
+  getGlobalCoachSubscriptionDiscount,
+} from '../../lib/pricing';
+
+const COACH_SUBSCRIPTION_PRICE_TRY = 299;
+
+const userId = Astro.url.searchParams.get('userId');
+const checkoutSessionId = (Astro.url.searchParams.get('session_id') || '').trim();
+const cancelled = Astro.url.searchParams.get('cancelled') === '1';
+
+if (!userId) {
+  return Astro.redirect('/auth/register');
+}
+
+const baseUser = await prisma.user.findUnique({
+  where: { id: userId },
+  include: {
+    coach: {
+      include: {
+        coachPackages: {
+          where: { isActive: true },
+          orderBy: { price: 'asc' },
+        },
+      },
+    },
+  },
+});
+
+if (!baseUser) {
+  return Astro.redirect('/auth/register');
+}
+
+const isCoachFlow = baseUser.role === 'coach' && baseUser.subscriptionStatus === 'pending';
+const isStudentFlow = baseUser.role === 'student' && baseUser.studentPaymentStatus !== 'paid';
+const canInspectExistingCheckout = Boolean(checkoutSessionId);
+
+if (!isCoachFlow && !isStudentFlow && !canInspectExistingCheckout) {
+  return Astro.redirect('/auth/register');
+}
+
+const coachPackages = isStudentFlow ? (baseUser.coach?.coachPackages || []) : [];
+const globalCoachDiscount = isCoachFlow ? await getGlobalCoachSubscriptionDiscount() : null;
+const coachSubscriptionPricing = calculateDiscountedAmount(
+  COACH_SUBSCRIPTION_PRICE_TRY,
+  globalCoachDiscount?.enabled ? globalCoachDiscount.amount : 0,
+);
+const coachPackageDiscount = isStudentFlow
+  ? await getCoachStudentPackageDiscount(baseUser.coachId)
+  : { enabled: false, amount: 0, updatedAt: null, updatedBy: null };
+const packageOptions = coachPackages.map((pkg) => {
+  const pricing = calculateDiscountedAmount(
+    pkg.price,
+    coachPackageDiscount.enabled ? coachPackageDiscount.amount : 0,
+  );
+
+  return {
+    ...pkg,
+    pricing,
+  };
+});
+
+let error = '';
+
+const checkoutTransaction = checkoutSessionId
+  ? await prisma.paymentTransaction.findFirst({
+      where: {
+        payerId: userId,
+        externalPaymentId: checkoutSessionId,
+      },
+      orderBy: { createdAt: 'desc' },
+    })
+  : null;
+
+if (checkoutTransaction?.status === 'paid') {
+  const token = await createSession(userId);
+  const cookie = createSessionCookie(token);
+
+  return new Response(null, {
+    status: 302,
+    headers: {
+      Location: '/dashboard',
+      'Set-Cookie': cookie,
+    },
+  });
+}
+
+if (cancelled) {
+  error = 'Odeme islemi iptal edildi. Devam etmek icin yeniden deneyin.';
+} else if (checkoutSessionId && checkoutTransaction?.status === 'failed') {
+  error = 'Odeme basarisiz oldu. Lutfen tekrar deneyin.';
+} else if (checkoutSessionId && !checkoutTransaction) {
+  error = 'Odeme kaydi bulunamadi. Lutfen tekrar deneyin.';
+}
+
+const awaitingWebhook = Boolean(checkoutSessionId) && (!checkoutTransaction || checkoutTransaction.status === 'pending');
+const retryOfTransactionId = checkoutTransaction?.status === 'failed' ? checkoutTransaction.id : '';
+---
+
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Odeme - CoachPro</title>
+  <link rel="stylesheet" href="/src/styles/global.css" />
+</head>
+<body class="min-h-screen bg-bg-primary flex items-center justify-center p-4">
+  <div class="w-full max-w-2xl">
+    <div class="text-center mb-8">
+      <a href="/" class="inline-flex items-center gap-3">
+        <div class="w-12 h-12 rounded-xl bg-linear-to-br from-accent-primary to-accent-purple flex items-center justify-center">
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5"><path d="M18 8h1a4 4 0 0 1 0 8h-1"/><path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z"/><line x1="6" y1="1" x2="6" y2="4"/><line x1="10" y1="1" x2="10" y2="4"/><line x1="14" y1="1" x2="14" y2="4"/></svg>
+        </div>
+        <span class="text-2xl font-bold text-text-primary">CoachPro</span>
+      </a>
+    </div>
+
+    <div class="card">
+      <div class="text-center mb-6">
+        <h1 class="text-2xl font-bold text-text-primary mb-2">
+          {isCoachFlow ? 'Egitmen Abonelik Odemesi' : 'Ogrenci Paket Odemesi'}
+        </h1>
+        <p class="text-text-secondary">
+          {isCoachFlow
+            ? 'Hesabinizi aktifestirmek icin odeme yapin'
+            : 'Paketinizi secin ve odeme ile kaydinizi tamamlayin'}
+        </p>
+      </div>
+
+      {isCoachFlow ? (
+        <div class="p-5 rounded-xl bg-linear-to-br from-accent-primary/10 to-accent-purple/10 border border-accent-primary/20 mb-6">
+          <div class="flex items-center justify-between mb-4">
+            <div>
+              <h3 class="font-semibold text-text-primary">Aylik Plan</h3>
+              <p class="text-sm text-text-secondary">Sinirsiz ogrenci, tum ozellikler</p>
+            </div>
+            <div class="text-right">
+              {coachSubscriptionPricing.discountAmount > 0 ? (
+                <div class="space-y-1">
+                  <div class="text-sm text-text-muted line-through">₺{coachSubscriptionPricing.baseAmount}</div>
+                  <div class="text-3xl font-bold text-accent-primary">₺{coachSubscriptionPricing.finalAmount}</div>
+                </div>
+              ) : (
+                <div class="text-3xl font-bold text-accent-primary">₺{coachSubscriptionPricing.finalAmount}</div>
+              )}
+              <div class="text-xs text-text-muted">/ay</div>
+            </div>
+          </div>
+          {coachSubscriptionPricing.discountAmount > 0 && (
+            <div class="mb-4 inline-flex items-center gap-2 rounded-lg bg-accent-green/10 border border-accent-green/20 px-3 py-1 text-xs font-semibold text-accent-green">
+              Admin indirimi aktif: -₺{coachSubscriptionPricing.discountAmount}
+            </div>
+          )}
+          <ul class="space-y-2 text-sm text-text-secondary">
+            <li class="flex items-center gap-2"><span class="text-accent-green">✓</span> Sinirsiz ogrenci ekleme</li>
+            <li class="flex items-center gap-2"><span class="text-accent-green">✓</span> Program ve diyet yonetimi</li>
+            <li class="flex items-center gap-2"><span class="text-accent-green">✓</span> AI destekli analiz</li>
+          </ul>
+        </div>
+      ) : (
+        <div class="mb-6 space-y-4">
+          <div class="p-4 rounded-xl bg-accent-cyan/10 border border-accent-cyan/20">
+            <p class="text-sm text-text-secondary">
+              Egitmen: <span class="font-semibold text-text-primary">{baseUser.coach?.name || 'Bilinmiyor'}</span>
+            </p>
+            <p class="text-xs text-text-muted mt-1">Odeme tamamlanmadan hesabiniz aktif olmaz.</p>
+          </div>
+
+          {coachPackageDiscount.enabled && coachPackageDiscount.amount > 0 && (
+            <div class="p-4 rounded-xl bg-accent-green/10 border border-accent-green/20">
+              <p class="text-sm font-semibold text-accent-green">Referans indirimi aktif</p>
+              <p class="text-xs text-text-secondary mt-1">Bu egitmenin tum paketlerinde ₺{coachPackageDiscount.amount} indirim uygulanir.</p>
+            </div>
+          )}
+
+          {coachPackages.length > 0 ? (
+            <div>
+              <p class="text-sm font-semibold text-text-primary mb-3">Paket Secimi</p>
+              <div class="grid grid-cols-1 gap-3">
+                {packageOptions.map((pkg) => (
+                  <label class="package-option cursor-pointer block">
+                    <input
+                      type="radio"
+                      name="packageId"
+                      value={pkg.id}
+                      form="paymentForm"
+                      class="peer sr-only package-radio"
+                      required
+                    />
+                    <div class="rounded-xl border border-border-default p-4 transition-all peer-checked:border-accent-primary peer-checked:bg-accent-primary/5 hover:border-accent-primary/40">
+                      <div class="flex items-start justify-between gap-3">
+                        <div>
+                          <p class="font-semibold text-text-primary">{pkg.name}</p>
+                          {pkg.description && (
+                            <p class="text-sm text-text-secondary mt-1">{pkg.description}</p>
+                          )}
+                          <p class="text-xs text-text-muted mt-2">{pkg.durationWeeks} hafta erisim</p>
+                        </div>
+                        <div class="text-right shrink-0">
+                          {pkg.pricing.discountAmount > 0 ? (
+                            <div class="space-y-1">
+                              <div class="text-xs text-text-muted line-through">₺{pkg.pricing.baseAmount}</div>
+                              <div class="text-2xl font-bold text-accent-primary">₺{pkg.pricing.finalAmount}</div>
+                            </div>
+                          ) : (
+                            <div class="text-2xl font-bold text-accent-primary">₺{pkg.pricing.finalAmount}</div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div class="p-4 rounded-lg bg-accent-red/10 border border-accent-red/20 text-accent-red text-sm">
+              Bu egitmen henuz aktif paket tanimlamadi. Odemeye devam edemezsiniz.
+            </div>
+          )}
+        </div>
+      )}
+
+      {error && (
+        <div class="mb-6 p-4 rounded-lg bg-accent-red/10 border border-accent-red/20 text-accent-red text-sm">
+          {error}
+        </div>
+      )}
+
+      {awaitingWebhook && (
+        <div id="awaitingWebhookBox" class="mb-6 p-4 rounded-lg bg-accent-primary/10 border border-accent-primary/20 text-text-secondary text-sm">
+          Odeme alindi, onay bekleniyor. Bu sayfa otomatik yenilenecek.
+        </div>
+      )}
+
+      <form
+        class="space-y-5"
+        id="paymentForm"
+        data-user-id={userId}
+        data-student-flow={isStudentFlow ? '1' : '0'}
+        data-checkout-session-id={checkoutSessionId}
+        data-awaiting-webhook={awaitingWebhook ? '1' : '0'}
+        data-retry-of-transaction-id={retryOfTransactionId}
+        data-coach-button-label={`Iyzico ile ₺${coachSubscriptionPricing.finalAmount} Ode ve Basla`}
+        data-student-button-label="Secilen Paketi Iyzico ile Ode"
+      >
+        <button
+          type="submit"
+          id="payButton"
+          class="btn-primary w-full py-3"
+          disabled={isStudentFlow && packageOptions.length === 0 || awaitingWebhook}
+        >
+          {awaitingWebhook
+            ? 'Odeme Onayi Bekleniyor...'
+            : isCoachFlow
+              ? `Iyzico ile ₺${coachSubscriptionPricing.finalAmount} Ode ve Basla`
+              : 'Secilen Paketi Iyzico ile Ode'}
+        </button>
+
+        <p class="text-xs text-text-muted text-center">
+          Guvenli odeme Iyzico altyapisi ile alinmaktadir.
+        </p>
+      </form>
+    </div>
+
+    <div class="flex items-center justify-center gap-2 mt-6 text-text-muted text-sm">
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+      256-bit SSL ile guvenli odeme
+    </div>
+  </div>
+
+  <script is:inline>
+    const paymentForm = document.getElementById('paymentForm');
+    const payButton = document.getElementById('payButton');
+
+    const formElement = paymentForm instanceof HTMLFormElement ? paymentForm : null;
+    const payButtonElement = payButton instanceof HTMLButtonElement ? payButton : null;
+
+    const userId = formElement?.dataset.userId || '';
+    const isStudentFlow = formElement?.dataset.studentFlow === '1';
+    const checkoutSessionId = formElement?.dataset.checkoutSessionId || '';
+    const awaitingWebhook = formElement?.dataset.awaitingWebhook === '1';
+    const retryOfTransactionId = formElement?.dataset.retryOfTransactionId || '';
+    const coachButtonLabel = formElement?.dataset.coachButtonLabel || 'Iyzico ile Ode ve Basla';
+    const studentButtonLabel = formElement?.dataset.studentButtonLabel || 'Secilen Paketi Iyzico ile Ode';
+
+    async function startCheckout(event) {
+      event.preventDefault();
+
+      if (awaitingWebhook) {
+        return;
+      }
+
+      if (!formElement || !payButtonElement) {
+        alert('Odeme formu hazir degil. Sayfayi yenileyin.');
+        return;
+      }
+
+      let packageId = '';
+      if (isStudentFlow) {
+        const selectedRadio = document.querySelector('input[name="packageId"]:checked');
+        packageId = selectedRadio ? selectedRadio.value : '';
+
+        if (!packageId) {
+          alert('Lutfen bir paket secin.');
+          return;
+        }
+      }
+
+      payButtonElement.setAttribute('disabled', 'true');
+      payButtonElement.textContent = 'Iyzico odeme sayfasi aciliyor...';
+
+      try {
+        const response = await fetch('/api/payments/create-checkout-session', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userId,
+            packageId,
+            retryOfTransactionId: retryOfTransactionId || undefined,
+          }),
+        });
+
+        const data = await response.json();
+        if (!response.ok || !data?.url) {
+          throw new Error(data?.error || 'Odeme oturumu olusturulamadi.');
+        }
+
+        window.location.href = data.url;
+      } catch (err) {
+        alert(err?.message || 'Odeme baslatilamadi.');
+        payButtonElement.removeAttribute('disabled');
+        payButtonElement.textContent = isStudentFlow
+          ? studentButtonLabel
+          : coachButtonLabel;
+      }
+    }
+
+    paymentForm?.addEventListener('submit', startCheckout);
+
+    if (checkoutSessionId && awaitingWebhook) {
+      setTimeout(() => {
+        window.location.reload();
+      }, 3500);
+    }
+    
+    document.querySelectorAll('.package-radio').forEach((radio) => {
+      radio.addEventListener('change', () => {
+        if (!awaitingWebhook && payButtonElement) {
+          payButtonElement.removeAttribute('disabled');
+        }
+      });
+    });
+  </script>
+</body>
+</html>
