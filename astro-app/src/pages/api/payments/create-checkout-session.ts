@@ -1,14 +1,22 @@
 import type { APIRoute } from 'astro';
+import { createHmac } from 'crypto';
 import prisma from '../../../lib/prisma';
+import { getPaymentAccessToken, getUserFromRequest, syncMembershipAccessState, verifyPaymentAccessToken } from '../../../lib/auth';
 import { initializeCheckoutForm } from '../../../lib/iyzico';
+import { getPlatformSubMerchantKey } from '../../../lib/payment-settings';
 import {
   calculateDiscountedAmount,
+  getCoachSubscriptionPlan,
+  getCoachSubscriptionPlanDiscounts,
   getCoachStudentPackageDiscount,
   getGlobalCoachSubscriptionDiscount,
+  resolveCoachSubscriptionDiscountAmount,
 } from '../../../lib/pricing';
 
-const COACH_SUBSCRIPTION_PRICE_TRY = 299;
 const prismaClient = prisma as any;
+const SAFE_ID_PATTERN = /^[a-zA-Z0-9_-]{8,128}$/;
+const SAFE_PLAN_ID_PATTERN = /^[a-z0-9_-]{2,32}$/i;
+const ACTIVE_SUB_MERCHANT_STATUSES = new Set(['active', 'approved', 'success']);
 
 function asPrice(value: number): string {
   return value.toFixed(2);
@@ -66,17 +74,30 @@ function getBuyerIdentityNumber(): string {
 }
 
 function getAppOrigin(request: Request): string {
-  const envOrigin = import.meta.env.PUBLIC_APP_URL;
+  const envOrigin = String(import.meta.env.PUBLIC_APP_URL || '').trim();
   if (envOrigin && /^https?:\/\//.test(envOrigin)) {
-    return envOrigin;
+    return envOrigin.replace(/\/+$/, '');
   }
 
-  const requestOrigin = request.headers.get('origin');
-  if (requestOrigin && /^https?:\/\//.test(requestOrigin)) {
-    return requestOrigin;
+  if (import.meta.env.PROD) {
+    throw new Error('PUBLIC_APP_URL must be configured in production');
   }
 
-  return 'http://localhost:4321';
+  const requestUrl = new URL(request.url);
+  return `${requestUrl.protocol}//${requestUrl.host}`;
+}
+
+function getWebhookSigningSecret(): string {
+  return String(
+    import.meta.env.IYZICO_WEBHOOK_SECRET ||
+      import.meta.env.PAYMENT_LINK_SECRET ||
+      import.meta.env.IYZICO_SECRET_KEY ||
+      '',
+  ).trim();
+}
+
+function createWebhookSignature(transactionId: string, userId: string, secret: string): string {
+  return createHmac('sha256', secret).update(`${transactionId}:${userId}`).digest('hex');
 }
 
 function requiresMarketplaceSubMerchant(message: string): boolean {
@@ -84,17 +105,34 @@ function requiresMarketplaceSubMerchant(message: string): boolean {
   return normalized.includes('marketplace') && normalized.includes('submerchantkey');
 }
 
+function isActiveSubMerchantStatus(value: unknown): boolean {
+  const normalized = String(value || '').trim().toLowerCase();
+  return ACTIVE_SUB_MERCHANT_STATUSES.has(normalized);
+}
+
 export const POST: APIRoute = async ({ request }) => {
   try {
     const payload = await request.json().catch(() => null) as {
       userId?: string;
+      paymentToken?: string;
       packageId?: string;
+      subscriptionPlanId?: string;
       retryOfTransactionId?: string;
     } | null;
 
     const userId = (payload?.userId || '').trim();
+    const requestPaymentToken = (payload?.paymentToken || '').trim();
+    const paymentToken = (getPaymentAccessToken(request.headers.get('cookie')) || '').trim();
     const packageId = (payload?.packageId || '').trim();
+    const subscriptionPlanId = (payload?.subscriptionPlanId || '').trim().toLowerCase();
     const retryOfTransactionId = (payload?.retryOfTransactionId || '').trim();
+
+    if (requestPaymentToken) {
+      return new Response(JSON.stringify({ error: 'Odeme tokeni sadece cookie uzerinden gonderilebilir.' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
 
     if (!userId) {
       return new Response(JSON.stringify({ error: 'Kullanici bulunamadi.' }), {
@@ -103,19 +141,64 @@ export const POST: APIRoute = async ({ request }) => {
       });
     }
 
-    const user = await prisma.user.findUnique({
+    if (!SAFE_ID_PATTERN.test(userId)) {
+      return new Response(JSON.stringify({ error: 'Kullanici kimligi gecersiz.' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (packageId && !SAFE_ID_PATTERN.test(packageId)) {
+      return new Response(JSON.stringify({ error: 'Paket kimligi gecersiz.' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (retryOfTransactionId && !SAFE_ID_PATTERN.test(retryOfTransactionId)) {
+      return new Response(JSON.stringify({ error: 'Tekrar odeme kimligi gecersiz.' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (subscriptionPlanId && !SAFE_PLAN_ID_PATTERN.test(subscriptionPlanId)) {
+      return new Response(JSON.stringify({ error: 'Abonelik plani gecersiz.' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (!paymentToken || !verifyPaymentAccessToken(paymentToken, userId)) {
+      return new Response(JSON.stringify({ error: 'Odeme oturumu gecersiz.' }), {
+        status: 403,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    const authUser = await getUserFromRequest(request);
+    if (authUser && authUser.id !== userId) {
+      return new Response(JSON.stringify({ error: 'Yetkisiz istek.' }), {
+        status: 403,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    const dbUser = await prisma.user.findUnique({
       where: { id: userId },
       include: {
         coach: true,
       },
     });
 
-    if (!user) {
+    if (!dbUser) {
       return new Response(JSON.stringify({ error: 'Kullanici bulunamadi.' }), {
         status: 404,
         headers: { 'Content-Type': 'application/json' },
       });
     }
+
+    const user = await syncMembershipAccessState(dbUser);
 
     const isCoachFlow = user.role === 'coach' && user.subscriptionStatus === 'pending';
     const isStudentFlow = user.role === 'student' && user.studentPaymentStatus !== 'paid';
@@ -129,10 +212,16 @@ export const POST: APIRoute = async ({ request }) => {
     }
 
     const appOrigin = getAppOrigin(request);
-    const platformSubMerchantKey = String(import.meta.env.IYZICO_PLATFORM_SUBMERCHANT_KEY || '').trim();
+    const platformSubMerchantKey = await getPlatformSubMerchantKey();
 
     let amount = 0;
     let transactionType = '';
+    let coachSubscriptionPlan: {
+      id: string;
+      label: string;
+      months: number;
+      price: number;
+    } | null = null;
     let packageRecord: { id: string; name: string; durationWeeks: number; coachId: string; price: number } | null = null;
     let description = '';
     let retryOfTransaction: {
@@ -151,17 +240,38 @@ export const POST: APIRoute = async ({ request }) => {
     };
 
     if (isCoachFlow) {
-      const globalCoachDiscount = await getGlobalCoachSubscriptionDiscount();
+      coachSubscriptionPlan = await getCoachSubscriptionPlan(subscriptionPlanId || 'monthly');
+
+      const [globalCoachDiscount, coachPlanDiscounts] = await Promise.all([
+        getGlobalCoachSubscriptionDiscount(),
+        getCoachSubscriptionPlanDiscounts(),
+      ]);
+      const coachDiscountAmount = resolveCoachSubscriptionDiscountAmount({
+        planId: coachSubscriptionPlan.id,
+        planDiscounts: coachPlanDiscounts,
+        globalDiscount: globalCoachDiscount,
+      });
+
       const pricing = calculateDiscountedAmount(
-        COACH_SUBSCRIPTION_PRICE_TRY,
-        globalCoachDiscount.enabled ? globalCoachDiscount.amount : 0,
+        coachSubscriptionPlan.price,
+        coachDiscountAmount,
       );
 
       amount = pricing.finalAmount;
       transactionType = 'coach_subscription';
-      description = 'Aylik koç abonelik odemesi';
+      description = `${coachSubscriptionPlan.label} koç abonelik odemesi`;
       pricingSnapshot = {
-        source: 'global_coach_subscription_discount',
+        source: 'coach_subscription_plan_discount',
+        planId: coachSubscriptionPlan.id,
+        planLabel: coachSubscriptionPlan.label,
+        billingPeriodMonths: coachSubscriptionPlan.months,
+        appliedDiscountAmount: coachDiscountAmount,
+        globalFallbackDiscountEnabled: Boolean(globalCoachDiscount.enabled),
+        globalFallbackDiscountAmount: globalCoachDiscount.amount,
+        planDiscountsSnapshot: {
+          monthly: coachPlanDiscounts.monthly,
+          yearly: coachPlanDiscounts.yearly,
+        },
         baseAmount: pricing.baseAmount,
         discountAmount: pricing.discountAmount,
         finalAmount: pricing.finalAmount,
@@ -227,11 +337,16 @@ export const POST: APIRoute = async ({ request }) => {
       }
 
       const coachSubMerchantKey = String(linkedCoach?.iyzicoSubMerchantKey || '').trim();
-      const coachPayoutReady = Boolean(linkedCoach?.iyzicoPayoutReadyAt && coachSubMerchantKey);
+      const coachSubMerchantStatus = String(linkedCoach?.iyzicoSubMerchantStatus || '').trim();
+      const coachPayoutReady = Boolean(
+        linkedCoach?.iyzicoPayoutReadyAt &&
+        coachSubMerchantKey &&
+        isActiveSubMerchantStatus(coachSubMerchantStatus),
+      );
 
       if (!coachPayoutReady) {
         return new Response(JSON.stringify({
-          error: 'Bu egitmenin odeme hesabi henuz tamamlanmamis. Lutfen daha sonra tekrar deneyin.',
+          error: 'Bu egitmenin odeme hesabi aktif degil. Lutfen egitmen onboarding durumunu kontrol edin.',
         }), {
           status: 400,
           headers: { 'Content-Type': 'application/json' },
@@ -299,6 +414,12 @@ export const POST: APIRoute = async ({ request }) => {
       pricing: pricingSnapshot,
     };
 
+    if (coachSubscriptionPlan) {
+      transactionMetadata.subscriptionPlanId = coachSubscriptionPlan.id;
+      transactionMetadata.subscriptionPlanLabel = coachSubscriptionPlan.label;
+      transactionMetadata.subscriptionPlanMonths = coachSubscriptionPlan.months;
+    }
+
     if (retryOfTransaction) {
       transactionMetadata.retryOfTransactionId = retryOfTransaction.id;
       transactionMetadata.retryAttempt = retryAttempt;
@@ -341,12 +462,21 @@ export const POST: APIRoute = async ({ request }) => {
     });
 
     const lineItemName = isCoachFlow
-      ? 'CoachPro Aylik Abonelik'
+      ? `CoachPro ${coachSubscriptionPlan?.label || 'Aylik Plan'} Abonelik`
       : `${packageRecord?.name || 'Koc Paketi'} (${packageRecord?.durationWeeks || 4} hafta)`;
 
     const amountPrice = asPrice(amount);
     const { firstName, lastName } = splitFullName(user.name);
-    const callbackUrl = `${appOrigin}/api/payments/webhook?transactionId=${transaction.id}&userId=${user.id}`;
+    const callbackUrlObject = new URL('/api/payments/webhook', appOrigin);
+    callbackUrlObject.searchParams.set('transactionId', transaction.id);
+    callbackUrlObject.searchParams.set('userId', user.id);
+
+    const webhookSigningSecret = getWebhookSigningSecret();
+    if (webhookSigningSecret) {
+      callbackUrlObject.searchParams.set('sig', createWebhookSignature(transaction.id, user.id, webhookSigningSecret));
+    }
+
+    const callbackUrl = callbackUrlObject.toString();
 
     const buildBasketItem = (
       useStudentMarketplaceRouting: boolean,

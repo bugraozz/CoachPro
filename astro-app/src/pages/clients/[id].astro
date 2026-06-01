@@ -2,6 +2,16 @@
 import MainLayout from '../../layouts/MainLayout.astro';
 import ClientProfile from '../../components/ClientProfile';
 import prisma from '../../lib/prisma';
+import { getUserFromRequest, isCoach } from '../../lib/auth';
+
+const currentUser = await getUserFromRequest(Astro.request);
+if (!currentUser) {
+  return Astro.redirect('/auth/login');
+}
+
+if (!isCoach(currentUser)) {
+  return Astro.redirect('/dashboard');
+}
 
 const { id } = Astro.params;
 
@@ -10,7 +20,11 @@ if (!id) {
 }
 
 const client = await prisma.user.findFirst({
-  where: { id, role: 'student' },
+  where: {
+    id,
+    role: 'student',
+    coachId: currentUser.id,
+  },
   include: {
     weightHistory: { orderBy: { date: 'desc' } },
     measurements: { orderBy: { date: 'desc' } },

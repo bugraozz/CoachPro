@@ -1,0 +1,58 @@
+name: Security Smoke
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          npm --prefix astro-app ci
+
+      - name: Start stack
+        run: docker compose -f docker-compose.yml up -d --build
+
+      - name: Wait for web health
+        shell: bash
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 90); do
+            if curl -fsS http://localhost:4321/api/analysis/health >/dev/null; then
+              echo "Web is healthy"
+              exit 0
+            fi
+            echo "Waiting for web... ($i/90)"
+            sleep 3
+          done
+          echo "Web health check timed out"
+          exit 1
+
+      - name: Run security smoke
+        env:
+          SECURITY_SMOKE_BASE_URL: http://localhost:4321
+        run: npm run security:smoke
+
+      - name: Web logs on failure
+        if: failure()
+        run: docker compose -f docker-compose.yml logs --no-color web
+
+      - name: Stop stack
+        if: always()
+        run: docker compose -f docker-compose.yml down -v

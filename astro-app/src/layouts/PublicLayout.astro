@@ -1,0 +1,33 @@
+---
+import '../styles/global.css';
+
+interface Props {
+  title: string;
+  description?: string;
+  bodyClass?: string;
+  bodyStyle?: string;
+  lang?: string;
+}
+
+const {
+  title,
+  description,
+  bodyClass = 'min-h-screen bg-bg-primary',
+  bodyStyle,
+  lang = 'tr',
+} = Astro.props;
+---
+
+<!DOCTYPE html>
+<html lang={lang}>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  {description ? <meta name="description" content={description} /> : null}
+  <title>{title}</title>
+  <slot name="head" />
+</head>
+<body class={bodyClass} style={bodyStyle || undefined}>
+  <slot />
+</body>
+</html>

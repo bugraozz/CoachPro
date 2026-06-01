@@ -1,0 +1,17 @@
+services:
+  python-service:
+    volumes:
+      - ./python-service:/app
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload", "--reload-dir", "/app"]
+
+  web:
+    volumes:
+      - ./astro-app:/app
+      - coachpro_web_node_modules:/app/node_modules
+    environment:
+      COACH_WEB_RUNTIME_MODE: "prod"
+      CHOKIDAR_USEPOLLING: "true"
+      WATCHPACK_POLLING: "true"
+
+volumes:
+  coachpro_web_node_modules:

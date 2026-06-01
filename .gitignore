@@ -1,6 +1,7 @@
 # Dependencies
 node_modules/
 astro-app/node_modules/
+astro-app/.pnpm-store/
 
 # Build outputs
 dist/
@@ -20,6 +21,9 @@ yarn-error.log*
 .env
 .env.*
 !.env.example
+
+# Local deployment secrets
+secrets/
 
 # Python
 .venv/

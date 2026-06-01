@@ -1,0 +1,325 @@
+---
+import MainLayout from '../../layouts/MainLayout.astro';
+import AdminCoachesPanel from '../../components/dashboard/AdminCoachesPanel';
+import { canManageAdminSecurity, getUserFromRequest, isBackofficeUser, isSuperAdmin } from '../../lib/auth';
+import prisma from '../../lib/prisma';
+import {
+  getCoachStudentPackageDiscount,
+  setCoachStudentPackageDiscount,
+} from '../../lib/pricing';
+
+const user = await getUserFromRequest(Astro.request);
+
+if (!user) {
+  return Astro.redirect('/auth/login');
+}
+
+if (!isBackofficeUser(user)) {
+  return Astro.redirect('/dashboard');
+}
+
+const currentUser = user as NonNullable<typeof user>;
+const canManageSensitiveMutations = canManageAdminSecurity(currentUser);
+const canManageCoachActivation = true;
+const prismaClient = prisma as any;
+
+const ok = (Astro.url.searchParams.get('ok') || '').trim();
+const error = (Astro.url.searchParams.get('error') || '').trim();
+
+type AdminAuditPayload = {
+  action: string;
+  targetUserId?: string | null;
+  targetEmail?: string | null;
+  metadata?: Record<string, unknown>;
+};
+
+function getRequestIp(request: Request): string {
+  const forwardedFor = request.headers.get('x-forwarded-for');
+  if (forwardedFor) {
+    const firstIp = forwardedFor.split(',')[0]?.trim();
+    if (firstIp) {
+      return firstIp;
+    }
+  }
+
+  const realIp = request.headers.get('x-real-ip');
+  if (realIp) {
+    return realIp;
+  }
+
+  return 'unknown';
+}
+
+async function writeAdminAuditLog(payload: AdminAuditPayload): Promise<void> {
+  try {
+    await prismaClient.adminActionAudit.create({
+      data: {
+        action: payload.action,
+        adminUserId: currentUser.id,
+        adminEmail: currentUser.email || null,
+        targetUserId: payload.targetUserId || null,
+        targetEmail: payload.targetEmail || null,
+        metadata: {
+          ...(payload.metadata || {}),
+          ip: getRequestIp(Astro.request),
+          userAgent: Astro.request.headers.get('user-agent') || null,
+          requestPath: Astro.url.pathname,
+        },
+      },
+    });
+  } catch (auditError) {
+    console.error('Admin audit log write failed:', auditError);
+  }
+}
+
+if (Astro.request.method === 'POST') {
+  const formData = await Astro.request.formData();
+  const action = String(formData.get('action') || '').trim();
+
+  try {
+    if (action === 'toggle_user_active') {
+      if (!canManageSensitiveMutations) {
+        throw new Error('Bu islemi sadece super admin yapabilir.');
+      }
+
+      const targetUserId = String(formData.get('userId') || '').trim();
+      const nextState = String(formData.get('nextState') || '').trim() === '1';
+
+      if (!targetUserId) {
+        throw new Error('Egitmen secilemedi.');
+      }
+
+      if (targetUserId === currentUser.id && !nextState) {
+        throw new Error('Kendi admin hesabinizi pasif yapamazsiniz.');
+      }
+
+      const targetUser = await prisma.user.findFirst({
+        where: { id: targetUserId, role: 'coach' },
+        select: {
+          id: true,
+          email: true,
+          role: true,
+          active: true,
+        },
+      });
+
+      if (!targetUser) {
+        throw new Error('Egitmen bulunamadi.');
+      }
+
+      await prisma.user.update({
+        where: { id: targetUserId },
+        data: { active: nextState },
+      });
+
+      await writeAdminAuditLog({
+        action,
+        targetUserId: targetUser.id,
+        targetEmail: targetUser.email,
+        metadata: {
+          role: targetUser.role,
+          previousActive: targetUser.active,
+          nextActive: nextState,
+          sourceModule: 'admin-coaches',
+        },
+      });
+
+      return Astro.redirect('/admin/coaches?ok=coach-updated');
+    }
+
+    if (action === 'grant_free_coach_access') {
+      if (!canManageCoachActivation) {
+        throw new Error('Bu islemi yapmaya yetkiniz yok.');
+      }
+
+      const coachId = String(formData.get('coachId') || '').trim();
+      const permanent = String(formData.get('permanent') || '').trim() === 'true';
+      const monthsRaw = parseInt(String(formData.get('months') || '1').trim(), 10);
+      const months = Number.isNaN(monthsRaw) ? 1 : Math.min(36, Math.max(1, monthsRaw));
+
+      if (!coachId) {
+        throw new Error('Egitmen secilemedi.');
+      }
+
+      if (coachId === currentUser.id) {
+        throw new Error('Kendi hesabiniza bu islemi uygulayamazsiniz.');
+      }
+
+      const coach = await prisma.user.findFirst({
+        where: { id: coachId, role: 'coach' },
+        select: {
+          id: true,
+          email: true,
+          subscriptionStatus: true,
+          subscriptionEnd: true,
+        },
+      });
+
+      if (!coach) {
+        throw new Error('Egitmen bulunamadi.');
+      }
+
+      const now = new Date();
+      const baseDate = coach.subscriptionEnd && new Date(coach.subscriptionEnd) > now
+        ? new Date(coach.subscriptionEnd)
+        : now;
+      const subscriptionEnd = permanent
+        ? null
+        : new Date(new Date(baseDate).setMonth(baseDate.getMonth() + months));
+
+      await prisma.user.update({
+        where: { id: coachId },
+        data: {
+          active: true,
+          subscriptionStatus: 'active',
+          subscriptionEnd,
+          subscriptionId: permanent ? 'admin-granted-permanent' : `admin-granted-${Date.now()}`,
+        },
+      });
+
+      await writeAdminAuditLog({
+        action,
+        targetUserId: coach.id,
+        targetEmail: coach.email,
+        metadata: {
+          permanent,
+          months,
+          previousSubscriptionStatus: coach.subscriptionStatus || null,
+          previousSubscriptionEnd: coach.subscriptionEnd ? coach.subscriptionEnd.toISOString() : null,
+          nextSubscriptionStatus: 'active',
+          nextSubscriptionEnd: subscriptionEnd ? subscriptionEnd.toISOString() : null,
+          sourceModule: 'admin-coaches',
+        },
+      });
+
+      return Astro.redirect('/admin/coaches?ok=coach-activated');
+    }
+
+    if (action === 'save_coach_discount') {
+      if (!canManageSensitiveMutations) {
+        throw new Error('Bu islemi sadece super admin yapabilir.');
+      }
+
+      const coachId = String(formData.get('coachId') || '').trim();
+      const enabled = String(formData.get('enabled') || '').trim() === 'true';
+      const amountRaw = parseInt(String(formData.get('amount') || '0').trim(), 10);
+      const amount = Number.isNaN(amountRaw) ? -1 : amountRaw;
+
+      if (!coachId) {
+        throw new Error('Egitmen secilemedi.');
+      }
+
+      if (coachId === currentUser.id) {
+        throw new Error('Kendi hesabiniza bu islemi uygulayamazsiniz.');
+      }
+
+      if (amount < 0) {
+        throw new Error('Indirim tutari gecersiz.');
+      }
+
+      const coach = await prisma.user.findFirst({
+        where: { id: coachId, role: 'coach' },
+        select: { id: true, email: true },
+      });
+
+      if (!coach) {
+        throw new Error('Egitmen bulunamadi.');
+      }
+
+      const previousCoachDiscount = await getCoachStudentPackageDiscount(coachId);
+
+      await setCoachStudentPackageDiscount(coachId, {
+        enabled,
+        amount,
+        updatedBy: currentUser.id,
+      });
+
+      await writeAdminAuditLog({
+        action,
+        targetUserId: coach.id,
+        targetEmail: coach.email,
+        metadata: {
+          previousEnabled: previousCoachDiscount.enabled,
+          previousAmount: previousCoachDiscount.amount,
+          nextEnabled: enabled,
+          nextAmount: amount,
+          sourceModule: 'admin-coaches',
+        },
+      });
+
+      return Astro.redirect('/admin/coaches?ok=coach-discount-saved');
+    }
+  } catch (postError) {
+    const message = postError instanceof Error ? postError.message : 'Islem tamamlanamadi.';
+    return Astro.redirect(`/admin/coaches?error=${encodeURIComponent(message)}`);
+  }
+
+  return Astro.redirect('/admin/coaches');
+}
+
+const coaches = await prisma.user.findMany({
+  where: { role: 'coach' },
+  select: {
+    id: true,
+    name: true,
+    email: true,
+    active: true,
+    referralCode: true,
+    subscriptionStatus: true,
+    subscriptionEnd: true,
+    createdAt: true,
+    _count: {
+      select: {
+        students: true,
+      },
+    },
+  },
+  orderBy: { createdAt: 'desc' },
+  take: 400,
+});
+
+const coachDiscountEntries = await Promise.all(
+  coaches.map(async (coach) => {
+    const discount = await getCoachStudentPackageDiscount(coach.id);
+    return [coach.id, discount] as const;
+  }),
+);
+
+const coachDiscountById = Object.fromEntries(coachDiscountEntries) as Record<string, {
+  enabled: boolean;
+  amount: number;
+  updatedAt: string | null;
+  updatedBy: string | null;
+}>;
+
+const totalCoaches = coaches.length;
+const activeCoaches = coaches.filter((coach) => coach.active).length;
+const passiveCoaches = totalCoaches - activeCoaches;
+const coachesWithStudents = coaches.filter((coach) => coach._count.students > 0).length;
+---
+<MainLayout title="Admin Egitmen Yonetimi" activePage="admin-coaches">
+  <AdminCoachesPanel
+    client:load
+    ok={ok}
+    error={error}
+    isSuperAdmin={isSuperAdmin(currentUser)}
+    canManageSensitive={canManageSensitiveMutations}
+    canManageCoachActivation={canManageCoachActivation}
+    totalCoaches={totalCoaches}
+    activeCoaches={activeCoaches}
+    passiveCoaches={passiveCoaches}
+    coachesWithStudents={coachesWithStudents}
+    coaches={coaches.map((c) => ({
+      id: c.id,
+      name: c.name,
+      email: c.email,
+      active: c.active,
+      referralCode: c.referralCode,
+      subscriptionStatus: c.subscriptionStatus,
+      subscriptionEnd: c.subscriptionEnd ? c.subscriptionEnd.toISOString() : null,
+      createdAt: c.createdAt.toISOString(),
+      studentCount: c._count.students,
+    }))}
+    coachDiscountById={coachDiscountById}
+  />
+</MainLayout>

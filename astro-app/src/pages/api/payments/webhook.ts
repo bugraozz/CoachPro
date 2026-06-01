@@ -1,29 +1,25 @@
 import type { APIRoute } from 'astro';
+import { createHmac, timingSafeEqual } from 'crypto';
+import { readFileSync } from 'fs';
 import prisma from '../../../lib/prisma';
+import { createPaymentAccessCookie, createPaymentAccessToken } from '../../../lib/auth';
+import { sendPushToUser } from '../../../lib/push';
 import { retrieveCheckoutForm } from '../../../lib/iyzico';
 
 const prismaClient = prisma as any;
 
-function getRequestHost(request: Request): string {
-  const forwardedHost = request.headers.get('x-forwarded-host');
-  if (forwardedHost) {
-    const firstHost = forwardedHost.split(',')[0]?.trim();
-    if (firstHost) {
-      return firstHost;
-    }
-  }
-
-  return new URL(request.url).host;
-}
-
 function isAllowedCallbackHost(request: Request): boolean {
-  const appUrl = import.meta.env.PUBLIC_APP_URL;
+  const appUrl = String(import.meta.env.PUBLIC_APP_URL || '').trim();
   if (!appUrl || !/^https?:\/\//.test(appUrl)) {
     return true;
   }
 
-  const allowedHost = new URL(appUrl).host;
-  return getRequestHost(request) === allowedHost;
+  try {
+    const allowedHost = new URL(appUrl).host;
+    return new URL(request.url).host === allowedHost;
+  } catch {
+    return false;
+  }
 }
 
 function toCurrencyNumber(value: unknown): number | null {
@@ -36,17 +32,138 @@ function toCurrencyNumber(value: unknown): number | null {
 }
 
 function getAppOrigin(request: Request): string {
-  const envOrigin = import.meta.env.PUBLIC_APP_URL;
+  const envOrigin = String(import.meta.env.PUBLIC_APP_URL || '').trim();
   if (envOrigin && /^https?:\/\//.test(envOrigin)) {
-    return envOrigin;
+    return envOrigin.replace(/\/+$/, '');
   }
 
-  const requestOrigin = request.headers.get('origin');
-  if (requestOrigin && /^https?:\/\//.test(requestOrigin)) {
-    return requestOrigin;
+  if (import.meta.env.PROD) {
+    throw new Error('PUBLIC_APP_URL must be configured in production');
   }
 
-  return 'http://localhost:4321';
+  const requestUrl = new URL(request.url);
+  return `${requestUrl.protocol}//${requestUrl.host}`;
+}
+
+function getWebhookSigningSecret(): string {
+  return String(
+    import.meta.env.IYZICO_WEBHOOK_SECRET ||
+      import.meta.env.PAYMENT_LINK_SECRET ||
+      import.meta.env.IYZICO_SECRET_KEY ||
+      '',
+  ).trim();
+}
+
+function createWebhookSignature(transactionId: string, userId: string, secret: string): string {
+  return createHmac('sha256', secret).update(`${transactionId}:${userId}`).digest('hex');
+}
+
+function safeHexEquals(left: string, right: string): boolean {
+  try {
+    const leftBuffer = Buffer.from(left, 'hex');
+    const rightBuffer = Buffer.from(right, 'hex');
+
+    if (!leftBuffer.length || !rightBuffer.length || leftBuffer.length !== rightBuffer.length) {
+      return false;
+    }
+
+    return timingSafeEqual(leftBuffer, rightBuffer);
+  } catch {
+    return false;
+  }
+}
+
+function isValidWebhookSignature(url: URL, transactionId: string, userId: string): boolean {
+  const signingSecret = getWebhookSigningSecret();
+  if (!signingSecret) {
+    return true;
+  }
+
+  const providedSignature = String(url.searchParams.get('sig') || '').trim().toLowerCase();
+  if (!providedSignature || !/^[a-f0-9]{64}$/.test(providedSignature)) {
+    return false;
+  }
+
+  if (!transactionId || !userId) {
+    return false;
+  }
+
+  const expectedSignature = createWebhookSignature(transactionId, userId, signingSecret).toLowerCase();
+  return safeHexEquals(providedSignature, expectedSignature);
+}
+
+function parseTrustedIpValues(raw: string): string[] {
+  return raw
+    .split(/\r?\n|,/)
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0 && !entry.startsWith('#'));
+}
+
+function getTrustedWebhookIpsConfig(): { enabled: boolean; ips: Set<string> } {
+  const inlineRaw = String(import.meta.env.IYZICO_WEBHOOK_TRUSTED_IPS || '').trim();
+  const filePath = String(import.meta.env.IYZICO_WEBHOOK_TRUSTED_IPS_FILE || '').trim();
+
+  if (!inlineRaw && !filePath) {
+    return { enabled: false, ips: new Set<string>() };
+  }
+
+  let fileRaw = '';
+  if (filePath) {
+    try {
+      fileRaw = readFileSync(filePath, 'utf8');
+    } catch {
+      // Fail closed if a file path is configured but cannot be read.
+      return { enabled: true, ips: new Set<string>() };
+    }
+  }
+
+  const ips = new Set<string>();
+
+  for (const ip of parseTrustedIpValues(inlineRaw)) {
+    ips.add(ip);
+  }
+
+  for (const ip of parseTrustedIpValues(fileRaw)) {
+    ips.add(ip);
+  }
+
+  return { enabled: true, ips };
+}
+
+function getRequestSourceIp(request: Request): string {
+  const cloudflareIp = request.headers.get('cf-connecting-ip')?.trim();
+  if (cloudflareIp) {
+    return cloudflareIp;
+  }
+
+  const forwardedFor = request.headers.get('x-forwarded-for');
+  if (forwardedFor) {
+    const first = forwardedFor.split(',')[0]?.trim();
+    if (first) {
+      return first;
+    }
+  }
+
+  const realIp = request.headers.get('x-real-ip')?.trim();
+  if (realIp) {
+    return realIp;
+  }
+
+  return '';
+}
+
+function isTrustedWebhookSource(request: Request): boolean {
+  const trustedIpConfig = getTrustedWebhookIpsConfig();
+  if (!trustedIpConfig.enabled) {
+    return true;
+  }
+
+  if (trustedIpConfig.ips.size === 0) {
+    return false;
+  }
+
+  const sourceIp = getRequestSourceIp(request);
+  return Boolean(sourceIp && trustedIpConfig.ips.has(sourceIp));
 }
 
 async function markTransactionAsPaid(transaction: any, checkoutResult: Record<string, unknown>): Promise<void> {
@@ -74,8 +191,28 @@ async function markTransactionAsPaid(transaction: any, checkoutResult: Record<st
     });
 
     if (transaction.type === 'coach_subscription') {
-      const subscriptionEnd = new Date();
-      subscriptionEnd.setMonth(subscriptionEnd.getMonth() + 1);
+      const transactionMetadata =
+        transaction.metadata && typeof transaction.metadata === 'object'
+          ? transaction.metadata as Record<string, unknown>
+          : {};
+
+      const subscriptionPlanMonthsRaw = Number(transactionMetadata.subscriptionPlanMonths || 1);
+      const subscriptionPlanMonths = Number.isFinite(subscriptionPlanMonthsRaw)
+        ? Math.max(1, Math.min(36, Math.round(subscriptionPlanMonthsRaw)))
+        : 1;
+
+      const existingCoach = await tx.user.findUnique({
+        where: { id: transaction.payerId },
+        select: { subscriptionEnd: true },
+      });
+
+      const subscriptionBaseDate =
+        existingCoach?.subscriptionEnd && new Date(existingCoach.subscriptionEnd) > new Date()
+          ? new Date(existingCoach.subscriptionEnd)
+          : new Date();
+
+      const subscriptionEnd = new Date(subscriptionBaseDate);
+      subscriptionEnd.setMonth(subscriptionEnd.getMonth() + subscriptionPlanMonths);
 
       await tx.user.update({
         where: { id: transaction.payerId },
@@ -85,32 +222,50 @@ async function markTransactionAsPaid(transaction: any, checkoutResult: Record<st
           subscriptionEnd,
         },
       });
+      try {
+        await tx.notification.create({
+          data: {
+            userId: transaction.payerId,
+            actorId: transaction.payerId,
+            type: 'payment',
+            title: 'Ödeme alındı',
+            body: `Abonelik ödemesi alındı.`,
+            payload: { transactionId: transaction.id },
+          },
+        });
+      } catch (err) {
+        // avoid failing the whole transaction for notification errors
+        console.error('Notification create error (coach_subscription):', err);
+      }
     }
 
     if (transaction.type === 'student_package') {
+      const selectedPackage = transaction.packageId
+        ? await tx.coachPackage.findUnique({
+            where: { id: transaction.packageId },
+            select: { name: true, durationWeeks: true },
+          })
+        : null;
+
+      const studentAccessEnd = new Date();
+      studentAccessEnd.setDate(studentAccessEnd.getDate() + (Number(selectedPackage?.durationWeeks || 4) * 7));
+
       await tx.user.update({
         where: { id: transaction.payerId },
         data: {
           active: true,
           studentPaymentStatus: 'paid',
           studentPaidAt: new Date(),
+          studentAccessEnd,
           selectedPackageId: transaction.packageId,
         },
       });
 
       if (transaction.coachId) {
-        const [student, selectedPackage] = await Promise.all([
-          tx.user.findUnique({
-            where: { id: transaction.payerId },
-            select: { id: true, name: true },
-          }),
-          transaction.packageId
-            ? tx.coachPackage.findUnique({
-                where: { id: transaction.packageId },
-                select: { name: true },
-              })
-            : Promise.resolve(null),
-        ]);
+        const student = await tx.user.findUnique({
+          where: { id: transaction.payerId },
+          select: { id: true, name: true },
+        });
 
         const studentName = student?.name || 'Yeni bir ogrenci';
         const packageSuffix = selectedPackage?.name ? ` (${selectedPackage.name})` : '';
@@ -124,6 +279,20 @@ async function markTransactionAsPaid(transaction: any, checkoutResult: Record<st
             read: false,
           },
         });
+        try {
+          await tx.notification.create({
+            data: {
+              userId: transaction.coachId,
+              actorId: transaction.payerId,
+              type: 'payment',
+              title: 'Öğrenci ödemesi',
+              body: `Öğrenciden yeni ödeme alındı: ${studentName}${packageSuffix}.`,
+              payload: { transactionId: transaction.id },
+            },
+          });
+        } catch (err) {
+          console.error('Notification create error (student_package):', err);
+        }
       }
     }
   });
@@ -172,6 +341,14 @@ export const POST: APIRoute = async ({ request }) => {
 
   if (!token) {
     return new Response('Missing token', { status: 400 });
+  }
+
+  if (!isValidWebhookSignature(url, transactionIdFromQuery, userIdFromQuery)) {
+    return new Response('Invalid callback signature', { status: 403 });
+  }
+
+  if (!isTrustedWebhookSource(request)) {
+    return new Response('Callback source is not allowed', { status: 403 });
   }
 
   try {
@@ -228,6 +405,16 @@ export const POST: APIRoute = async ({ request }) => {
 
     if (isPaid) {
       await markTransactionAsPaid(transaction, checkoutResult);
+      try {
+        // send push to payer
+        await sendPushToUser(String(transaction.payerId), 'Ödeme başarılı', 'Ödemeniz başarıyla alındı', { transactionId: transaction.id });
+        // if student package and coach exists, notify coach
+        if (transaction.type === 'student_package' && transaction.coachId) {
+          await sendPushToUser(String(transaction.coachId), 'Yeni ödeme', 'Bir öğrenciden ödeme alındı', { transactionId: transaction.id });
+        }
+      } catch (err) {
+        console.error('Push send error (webhook):', err);
+      }
     } else {
       await markTransactionAsFailed(
         transaction,
@@ -239,9 +426,17 @@ export const POST: APIRoute = async ({ request }) => {
     const appOrigin = getAppOrigin(request);
     const targetUserId = transaction.payerId || userIdFromQuery;
     const paymentRef = transaction.externalPaymentId || transaction.id;
-    const redirectUrl = `${appOrigin}/auth/payment?userId=${targetUserId}&session_id=${paymentRef}`;
+    const paymentToken = createPaymentAccessToken(targetUserId);
+    const redirectUrl = `${appOrigin}/auth/payment?userId=${encodeURIComponent(targetUserId)}&session_id=${encodeURIComponent(paymentRef)}`;
 
-    return Response.redirect(redirectUrl, 302);
+    const headers = new Headers();
+    headers.set('Location', redirectUrl);
+    headers.append('Set-Cookie', createPaymentAccessCookie(paymentToken));
+
+    return new Response(null, {
+      status: 302,
+      headers,
+    });
 
   } catch (error) {
     console.error('Iyzico webhook isleme hatasi:', error);

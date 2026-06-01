@@ -1,0 +1,79 @@
+---
+import { getHomeTextOverrides } from '../lib/site-content';
+import PublicLayout from '../layouts/PublicLayout.astro';
+
+const textOverrides = await getHomeTextOverrides();
+
+const pageText = (key: string, fallback: string): string => {
+  const value = textOverrides[key];
+  if (typeof value !== 'string') {
+    return fallback;
+  }
+
+  const normalized = value.trim();
+  return normalized || fallback;
+};
+---
+
+<PublicLayout
+  title="CoachPro - Hakkimizda"
+  description="CoachPro hakkinda"
+  bodyClass="min-h-screen bg-bg-primary"
+>
+  <header class="border-b border-border-default bg-white/90 backdrop-blur-xl sticky top-0 z-40">
+    <div class="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between">
+      <a href="/" class="font-bold text-xl text-text-primary">CoachPro</a>
+      <div class="flex items-center gap-4 text-sm">
+        <a href="/faq" class="text-text-secondary hover:text-text-primary transition-colors">FAQ</a>
+        <a href="/auth/register" class="btn-primary">Ucretsiz Basla</a>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-5xl mx-auto px-6 py-14 space-y-10">
+    <section class="text-center">
+      <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-red-50 border border-red-200 text-red-600 text-xs font-semibold mb-4">
+        {pageText('about.hero.badge', 'HAKKIMIZDA')}
+      </div>
+      <h1 class="text-4xl md:text-5xl font-bold text-text-primary mb-4">
+        {pageText('about.hero.title', 'CoachPro ile Koclugunuzu Dijitallestirin')}
+      </h1>
+      <p class="text-text-secondary max-w-2xl mx-auto leading-relaxed">
+        {pageText('about.hero.subtitle', 'CoachPro, kocluk sureclerini tek panelde yonetmeniz icin gelistirilmis modern bir platformdur.')}
+      </p>
+    </section>
+
+    <section class="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <article class="card">
+        <h2 class="text-2xl font-semibold text-text-primary mb-3">{pageText('about.mission.title', 'Misyonumuz')}</h2>
+        <p class="text-text-secondary leading-relaxed">
+          {pageText('about.mission.body', 'Egitmenlerin ogrencileriyle daha etkili iletisim kurmasini, programlarini veri odakli takip etmesini ve sureclerini olceklenebilir hale getirmesini saglamak.')}
+        </p>
+      </article>
+
+      <article class="card">
+        <h2 class="text-2xl font-semibold text-text-primary mb-3">{pageText('about.vision.title', 'Vizyonumuz')}</h2>
+        <p class="text-text-secondary leading-relaxed">
+          {pageText('about.vision.body', 'Turkiye ve global pazarda dijital koclugun standart platformu olmak, egitmenlerin buyumesini teknolojik olarak desteklemek.')}
+        </p>
+      </article>
+    </section>
+
+    <section class="text-center">
+      <a href="/auth/register" class="btn-primary px-8 py-3 inline-flex items-center justify-center">
+        {pageText('about.cta.primary', 'Hemen Basla')}
+      </a>
+    </section>
+  </main>
+
+  <footer class="py-10 px-6 border-t border-border-default bg-white/80">
+    <div class="max-w-5xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4 text-sm text-text-secondary">
+      <span>{pageText('footer.copyright', '© 2024 CoachPro. Tum haklari saklidir.')}</span>
+      <div class="flex items-center gap-5">
+        <a href="/privacy" class="hover:text-text-primary transition-colors">{pageText('footer.link.privacy', 'Gizlilik')}</a>
+        <a href="/terms" class="hover:text-text-primary transition-colors">{pageText('footer.link.terms', 'Kullanim Sartlari')}</a>
+        <a href="/contact" class="hover:text-text-primary transition-colors">{pageText('footer.link.contact', 'Iletisim')}</a>
+      </div>
+    </div>
+  </footer>
+</PublicLayout>

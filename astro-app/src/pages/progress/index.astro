@@ -2,6 +2,7 @@
 import MainLayout from '../../layouts/MainLayout.astro';
 import { getUserFromRequest, isCoach } from '../../lib/auth';
 import prisma from '../../lib/prisma';
+import { AddMeasurementModal } from '../../components/progress/AddMeasurementModal';
 
 const user = await getUserFromRequest(Astro.request);
 
@@ -64,35 +65,39 @@ const bmi = currentWeight && height ? (currentWeight / ((height / 100) ** 2)).to
 
 <MainLayout title="Gelişim Takibi" activePage="progress">
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <header class="px-6 lg:px-8 py-5 border-b border-border-default bg-bg-secondary/80 backdrop-blur-xl sticky top-0 z-50">
+  <header class="section-header">
     <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-      <div>
-        <h1 class="text-2xl font-bold text-text-primary">Gelişim Takibi</h1>
-        <p class="text-sm text-text-secondary mt-1">
-          {userIsCoach ? 'Öğrenci bazlı kilo ve ölçüm takibi' : 'Kilo ve vücut ölçümlerindeki değişimler'}
-        </p>
+      <div class="animate-in">
+        <h1>Gelişim Takibi</h1>
+        <p>{userIsCoach ? 'Öğrenci bazlı kilo ve ölçüm takibi' : 'Kilo ve vücut ölçümlerindeki değişimler'}</p>
       </div>
-      {userIsCoach && students.length > 0 && (
-        <div class="flex items-center gap-2">
-          <label class="text-sm text-text-secondary font-medium">Öğrenci:</label>
-          <select id="studentPicker" class="px-4 py-2 rounded-lg border border-border-default bg-bg-primary text-text-primary text-sm focus:outline-none focus:ring-2 focus:ring-accent-primary/50 min-w-[180px]">
-            {students.map(s => (
-              <option value={s.id} selected={s.id === selectedId}>{s.name}</option>
-            ))}
-          </select>
-        </div>
-      )}
+      <div class="flex flex-wrap items-center gap-4 animate-in-2">
+        {(!userIsCoach || (userIsCoach && targetUser)) && (
+          <AddMeasurementModal clientId={userIsCoach ? selectedId : undefined} client:load />
+        )}
+        
+        {userIsCoach && students.length > 0 && (
+          <div class="flex items-center gap-2">
+            <label class="text-sm text-text-secondary font-medium">Öğrenci:</label>
+            <select id="studentPicker" class="input-field w-auto min-w-[180px]">
+              {students.map(s => (
+                <option value={s.id} selected={s.id === selectedId}>{s.name}</option>
+              ))}
+            </select>
+          </div>
+        )}
+      </div>
     </div>
   </header>
 
-  <div class="p-6 lg:p-8">
+  <div class="page-content">
     {userIsCoach && students.length === 0 ? (
-      <div class="text-center py-16">
-        <div class="w-20 h-20 rounded-3xl bg-bg-tertiary flex items-center justify-center mx-auto mb-6">
-          <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="text-text-muted"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+      <div class="empty-state animate-in">
+        <div class="empty-state-icon">
+          <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="text-text-muted"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
         </div>
-        <h3 class="text-xl font-bold text-text-primary mb-2">Henüz öğrenci yok</h3>
-        <p class="text-text-secondary">Gelişim takibi için önce öğrenci eklemeniz gerekiyor.</p>
+        <p class="empty-state-title">Henüz öğrenci yok</p>
+        <p class="empty-state-description">Gelişim takibi için önce öğrenci eklemeniz gerekiyor.</p>
       </div>
     ) : (
       <div>
@@ -121,21 +126,21 @@ const bmi = currentWeight && height ? (currentWeight / ((height / 100) ** 2)).to
 
         <!-- Stats Overview -->
         <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 lg:gap-5 mb-8">
-          <div class="stat-card">
+          <div class="stat-card animate-in-1" style="--stat-accent: linear-gradient(90deg, #CD0000, #ff4444)">
             <div class="stat-value">{currentWeight || '—'}</div>
             <div class="stat-label">Mevcut Kilo (kg)</div>
           </div>
-          <div class="stat-card">
+          <div class="stat-card animate-in-2" style="--stat-accent: linear-gradient(90deg, #10b981, #34d399)">
             <div class="stat-value">{targetWeight || '—'}</div>
             <div class="stat-label">Hedef Kilo (kg)</div>
           </div>
-          <div class="stat-card">
+          <div class="stat-card animate-in-3" style="--stat-accent: linear-gradient(90deg, #f97316, #fb923c)">
             <div class={`stat-value ${weightChange && parseFloat(weightChange) < 0 ? 'text-accent-green' : 'text-accent-orange'}`}>
               {weightChange ? `${parseFloat(weightChange) > 0 ? '+' : ''}${weightChange}` : '—'}
             </div>
             <div class="stat-label">Toplam Değişim (kg)</div>
           </div>
-          <div class="stat-card">
+          <div class="stat-card animate-in-4" style="--stat-accent: linear-gradient(90deg, #06b6d4, #22d3ee)">
             <div class={`stat-value ${bmi && parseFloat(bmi) > 25 ? 'text-accent-orange' : 'text-accent-green'}`}>{bmi || '—'}</div>
             <div class="stat-label">BMI</div>
           </div>
@@ -143,7 +148,7 @@ const bmi = currentWeight && height ? (currentWeight / ((height / 100) ** 2)).to
 
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <!-- Weight Chart -->
-          <div class="lg:col-span-2 card">
+          <div class="lg:col-span-2 card-accent animate-in-5" style="--accent-stripe: linear-gradient(90deg, #CD0000, #ff4444)">
             <h3 class="text-lg font-semibold text-text-primary mb-4 flex items-center gap-2">
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-accent-primary"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
               Kilo Grafiği
@@ -160,7 +165,7 @@ const bmi = currentWeight && height ? (currentWeight / ((height / 100) ** 2)).to
           </div>
 
           <!-- Weight History List -->
-          <div class="card">
+          <div class="card animate-in-6">
             <h3 class="text-lg font-semibold text-text-primary mb-4">Kilo Geçmişi</h3>
             {weightHistory.length > 0 ? (
               <div class="space-y-2 max-h-[300px] overflow-y-auto">

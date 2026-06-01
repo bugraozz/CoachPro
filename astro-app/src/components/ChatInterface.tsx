@@ -1,4 +1,4 @@
-﻿import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 interface ChatProps {
   currentUserId: string;
@@ -244,8 +244,32 @@ export default function ChatInterface({
   useEffect(() => {
     setLoading(true);
     fetchMessages();
-    const interval = setInterval(fetchMessages, 3000);
-    return () => clearInterval(interval);
+    
+    const eventSource = new EventSource('/api/messages/stream');
+    
+    eventSource.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+        // Only append if message is from the user we are currently chatting with
+        if (msg.senderId === otherUserId || msg.receiverId === otherUserId) {
+          setMessages((prev) => {
+            if (prev.some(m => m.id === msg.id)) return prev;
+            return [...prev, msg];
+          });
+        }
+      } catch (e) {
+        console.error('SSE parse error', e);
+      }
+    };
+
+    eventSource.onerror = (err) => {
+      console.error('SSE Error:', err);
+      // Fallback to manual refresh or just wait for reconnect
+    };
+
+    return () => {
+      eventSource.close();
+    };
   }, [otherUserId]);
 
   useEffect(() => {

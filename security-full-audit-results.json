@@ -1,0 +1,452 @@
+[
+  {
+    "name": "analysis health public",
+    "method": "GET",
+    "path": "/api/analysis/health",
+    "expected": "200,503",
+    "status": 200,
+    "pass": true,
+    "bodySnippet": "{\"status\":\"ok\",\"python\":true}"
+  },
+  {
+    "name": "clients list unauth blocked",
+    "method": "GET",
+    "path": "/api/clients",
+    "expected": "401",
+    "status": 401,
+    "pass": true,
+    "bodySnippet": "{\"error\":\"Unauthorized\"}"
+  },
+  {
+    "name": "client create unauth blocked",
+    "method": "POST",
+    "path": "/api/clients",
+    "expected": "401",
+    "status": 401,
+    "pass": true,
+    "bodySnippet": "{\"error\":\"Unauthorized\"}"
+  },
+  {
+    "name": "messages unauth blocked",
+    "method": "GET",
+    "path": "/api/messages/cmo0cedia0000k3vofg4q4j0l",
+    "expected": "401",
+    "status": 401,
+    "pass": true,
+    "bodySnippet": "{\"error\":\"Unauthorized\"}"
+  },
+  {
+    "name": "payment malformed id blocked",
+    "method": "POST",
+    "path": "/api/payments/create-checkout-session",
+    "expected": "400",
+    "status": 429,
+    "pass": false,
+    "bodySnippet": "{\"error\":\"Cok fazla istek gonderildi. Lutfen tekrar deneyin.\"}"
+  },
+  {
+    "name": "payment token in body rejected",
+    "method": "POST",
+    "path": "/api/payments/create-checkout-session",
+    "expected": "400",
+    "status": 429,
+    "pass": false,
+    "bodySnippet": "{\"error\":\"Cok fazla istek gonderildi. Lutfen tekrar deneyin.\"}"
+  },
+  {
+    "name": "payment no token blocked",
+    "method": "POST",
+    "path": "/api/payments/create-checkout-session",
+    "expected": "403",
+    "status": 429,
+    "pass": false,
+    "bodySnippet": "{\"error\":\"Cok fazla istek gonderildi. Lutfen tekrar deneyin.\"}"
+  },
+  {
+    "name": "webhook missing token blocked",
+    "method": "POST",
+    "path": "/api/payments/webhook",
+    "expected": "400",
+    "status": 400,
+    "pass": true,
+    "bodySnippet": "Missing token"
+  },
+  {
+    "name": "contact invalid payload blocked",
+    "method": "POST",
+    "path": "/api/contact",
+    "expected": "400",
+    "status": 400,
+    "pass": true,
+    "bodySnippet": "{\"error\":\"Ad Soyad 2-80 karakter araliginda olmalidir.\"}"
+  },
+  {
+    "name": "contact honeypot accepted silently",
+    "method": "POST",
+    "path": "/api/contact",
+    "expected": "200",
+    "status": 200,
+    "pass": true,
+    "bodySnippet": "{\"success\":true,\"accepted\":true}"
+  },
+  {
+    "name": "contact valid payload accepted",
+    "method": "POST",
+    "path": "/api/contact",
+    "expected": "200",
+    "status": 200,
+    "pass": true,
+    "bodySnippet": "{\"success\":true}"
+  },
+  {
+    "name": "coach clients list ok",
+    "method": "GET",
+    "path": "/api/clients",
+    "expected": "200",
+    "status": 200,
+    "pass": true,
+    "bodySnippet": "[{\"id\":\"cmo0cedj50002k3vognia6gup\",\"email\":\"qa.student.audit@example.com\",\"password\":\"$2b$12$k9UEVfTk1lA7Y21Yhx9v9OP1LQDgY17M2E4WQxHyfKVJkQW8C9sNq\",\"name\":\"QA Student Owned\",\"role\":\"student\",\"phone\":null,\"photoUrl\":null,\"referralCode\":null,\"subscriptionStatus\":null,\"subscriptionId\":null,\"subscriptio..."
+  },
+  {
+    "name": "student clients list blocked",
+    "method": "GET",
+    "path": "/api/clients",
+    "expected": "401",
+    "status": 403,
+    "pass": false,
+    "bodySnippet": "{\"error\":\"Forbidden\"}"
+  },
+  {
+    "name": "coach foreign student not found",
+    "method": "GET",
+    "path": "/api/clients/cmo0cedje0004k3vowud028po",
+    "expected": "404",
+    "status": 404,
+    "pass": true,
+    "bodySnippet": "{\"error\":\"Client not found\"}"
+  },
+  {
+    "name": "coach own student detail ok",
+    "method": "GET",
+    "path": "/api/clients/cmo0cedj50002k3vognia6gup",
+    "expected": "200",
+    "status": 200,
+    "pass": true,
+    "bodySnippet": "{\"id\":\"cmo0cedj50002k3vognia6gup\",\"email\":\"qa.student.audit@example.com\",\"password\":\"$2b$12$k9UEVfTk1lA7Y21Yhx9v9OP1LQDgY17M2E4WQxHyfKVJkQW8C9sNq\",\"name\":\"QA Student Owned\",\"role\":\"student\",\"phone\":null,\"photoUrl\":null,\"referralCode\":null,\"subscriptionStatus\":null,\"subscriptionId\":null,\"subscription..."
+  },
+  {
+    "name": "coach client create ok",
+    "method": "POST",
+    "path": "/api/clients",
+    "expected": "201",
+    "status": 201,
+    "pass": true,
+    "bodySnippet": "{\"id\":\"cmpv2xcby0001pj01e5dq5hr2\",\"email\":\"qa.temp.client.1780310534816@example.com\",\"password\":\"temporary-password\",\"name\":\"QA Temp Client\",\"role\":\"student\",\"phone\":null,\"photoUrl\":null,\"referralCode\":null,\"subscriptionStatus\":null,\"subscriptionId\":null,\"subscriptionEnd\":null,\"iyzicoSubMerchantKey\"..."
+  },
+  {
+    "name": "coach client update ok",
+    "method": "PUT",
+    "path": "/api/clients/cmpv2xcby0001pj01e5dq5hr2",
+    "expected": "200",
+    "status": 200,
+    "pass": true,
+    "bodySnippet": "{\"id\":\"cmpv2xcby0001pj01e5dq5hr2\",\"email\":\"qa.temp.client.updated.1780310534837@example.com\",\"password\":\"temporary-password\",\"name\":\"QA Temp Client Updated\",\"role\":\"student\",\"phone\":null,\"photoUrl\":null,\"referralCode\":null,\"subscriptionStatus\":null,\"subscriptionId\":null,\"subscriptionEnd\":null,\"iyzic..."
+  },
+  {
+    "name": "coach client delete ok",
+    "method": "DELETE",
+    "path": "/api/clients/cmpv2xcby0001pj01e5dq5hr2",
+    "expected": "200",
+    "status": 200,
+    "pass": true,
+    "bodySnippet": "{\"success\":true}"
+  },
+  {
+    "name": "coach client duplicate email handled gracefully",
+    "method": "PUT",
+    "path": "/api/clients/cmo0cedj50002k3vognia6gup",
+    "expected": "400,409",
+    "status": 409,
+    "pass": true,
+    "bodySnippet": "{\"error\":\"Bu e-posta adresi zaten kullaniliyor\"}"
+  },
+  {
+    "name": "csrf guard blocks cookie write without origin",
+    "method": "POST",
+    "path": "/api/weight",
+    "expected": "403",
+    "status": 403,
+    "pass": true,
+    "bodySnippet": "{\"error\":\"CSRF dogrulamasi basarisiz.\"}"
+  },
+  {
+    "name": "student own weight ok",
+    "method": "POST",
+    "path": "/api/weight",
+    "expected": "201",
+    "status": 201,
+    "pass": true,
+    "bodySnippet": "{\"id\":\"cmpv2xcek0003pj017x4ybj4g\",\"userId\":\"cmo0cedj50002k3vognia6gup\",\"weight\":72.2,\"date\":\"2026-06-01T10:42:14.924Z\"}"
+  },
+  {
+    "name": "student other weight forbidden",
+    "method": "POST",
+    "path": "/api/weight",
+    "expected": "403",
+    "status": 403,
+    "pass": true,
+    "bodySnippet": "{\"error\":\"Sadece kendi verinizi guncelleyebilirsiniz\"}"
+  },
+  {
+    "name": "coach student weight ok",
+    "method": "POST",
+    "path": "/api/weight",
+    "expected": "201",
+    "status": 201,
+    "pass": true,
+    "bodySnippet": "{\"id\":\"cmpv2xcfi0005pj019ncrcarh\",\"userId\":\"cmo0cedj50002k3vognia6gup\",\"weight\":73.4,\"date\":\"2026-06-01T10:42:14.959Z\"}"
+  },
+  {
+    "name": "coach invalid weight rejected",
+    "method": "POST",
+    "path": "/api/weight",
+    "expected": "400",
+    "status": 400,
+    "pass": true,
+    "bodySnippet": "{\"error\":\"Gecersiz kilo degeri\"}"
+  },
+  {
+    "name": "student own measurement ok",
+    "method": "POST",
+    "path": "/api/measurements",
+    "expected": "201",
+    "status": 201,
+    "pass": true,
+    "bodySnippet": "{\"id\":\"cmpv2xcgs0007pj01rt7gtr5y\",\"userId\":\"cmo0cedj50002k3vognia6gup\",\"date\":\"2026-06-01T10:42:15.004Z\",\"chest\":null,\"waist\":85,\"hip\":null,\"armLeft\":null,\"armRight\":null,\"legLeft\":null,\"legRight\":null,\"bodyFat\":null,\"neck\":null,\"shoulders\":null}"
+  },
+  {
+    "name": "student other measurement forbidden",
+    "method": "POST",
+    "path": "/api/measurements",
+    "expected": "403",
+    "status": 403,
+    "pass": true,
+    "bodySnippet": "{\"error\":\"Sadece kendi verinizi guncelleyebilirsiniz\"}"
+  },
+  {
+    "name": "student to coach message ok",
+    "method": "POST",
+    "path": "/api/messages/cmo0cedia0000k3vofg4q4j0l",
+    "expected": "201",
+    "status": 201,
+    "pass": true,
+    "bodySnippet": "{\"id\":\"cmpv2xchn0009pj016k7i3gnt\",\"content\":\"QA hello\",\"messageType\":\"text\",\"senderId\":\"cmo0cedj50002k3vognia6gup\",\"receiverId\":\"cmo0cedia0000k3vofg4q4j0l\",\"fileUrl\":null,\"fileName\":null,\"fileMimeType\":null,\"fileSize\":null,\"read\":false,\"createdAt\":\"2026-06-01T10:42:15.036Z\",\"sender\":{\"id\":\"cmo0cedj5..."
+  },
+  {
+    "name": "coach reads student messages ok",
+    "method": "GET",
+    "path": "/api/messages/cmo0cedj50002k3vognia6gup",
+    "expected": "200",
+    "status": 200,
+    "pass": true,
+    "bodySnippet": "[{\"id\":\"cmo0cefcu0009n83t7yx2iyi2\",\"content\":\"QA hello\",\"messageType\":\"text\",\"senderId\":\"cmo0cedj50002k3vognia6gup\",\"receiverId\":\"cmo0cedia0000k3vofg4q4j0l\",\"fileUrl\":null,\"fileName\":null,\"fileMimeType\":null,\"fileSize\":null,\"read\":true,\"createdAt\":\"2026-04-15T17:46:54.654Z\",\"sender\":{\"id\":\"cmo0cedj5..."
+  },
+  {
+    "name": "student-to-student blocked",
+    "method": "GET",
+    "path": "/api/messages/cmo0cedje0004k3vowud028po",
+    "expected": "403",
+    "status": 403,
+    "pass": true,
+    "bodySnippet": "{\"error\":\"Forbidden\"}"
+  },
+  {
+    "name": "coach student preview ok",
+    "method": "GET",
+    "path": "/api/messages/student-preview/cmo0cedj50002k3vognia6gup",
+    "expected": "200",
+    "status": 200,
+    "pass": true,
+    "bodySnippet": "{\"id\":\"cmo0cedj50002k3vognia6gup\",\"name\":\"QA Student Owned\",\"email\":\"qa.student.audit@example.com\",\"role\":\"student\",\"phone\":null,\"gender\":null,\"age\":null,\"height\":180,\"currentWeight\":73.4,\"targetWeight\":null,\"healthNotes\":null,\"programs\":[],\"dietPlans\":[],\"bodyAnalyses\":[],\"weightHistory\":[{\"id\":\"cm..."
+  },
+  {
+    "name": "student preview forbidden for student role",
+    "method": "GET",
+    "path": "/api/messages/student-preview/cmo0cedj50002k3vognia6gup",
+    "expected": "403",
+    "status": 403,
+    "pass": true,
+    "bodySnippet": "{\"error\":\"Only coaches can access student preview data\"}"
+  },
+  {
+    "name": "profile update ok",
+    "method": "POST",
+    "path": "/api/user/update-profile",
+    "expected": "200",
+    "status": 200,
+    "pass": true,
+    "bodySnippet": "{\"success\":true,\"user\":{\"id\":\"cmo0cedj50002k3vognia6gup\",\"name\":\"QA Student Updated\",\"email\":\"qa.student.audit@example.com\",\"phone\":null,\"gender\":null,\"age\":null,\"height\":180,\"currentWeight\":null,\"targetWeight\":null,\"healthNotes\":null,\"role\":\"student\"}}"
+  },
+  {
+    "name": "change password wrong current rejected",
+    "method": "POST",
+    "path": "/api/user/change-password",
+    "expected": "400",
+    "status": 400,
+    "pass": true,
+    "bodySnippet": "{\"error\":\"Mevcut şifre yanlış\"}"
+  },
+  {
+    "name": "payments history coach ok",
+    "method": "GET",
+    "path": "/api/payments/history",
+    "expected": "200",
+    "status": 200,
+    "pass": true,
+    "bodySnippet": "[]"
+  },
+  {
+    "name": "payments report coach ok",
+    "method": "GET",
+    "path": "/api/payments/report",
+    "expected": "200",
+    "status": 200,
+    "pass": true,
+    "bodySnippet": "{\"summary\":{\"totalCount\":0,\"paidCount\":0,\"failedCount\":0,\"pendingCount\":0,\"totalRevenue\":0,\"monthRevenue\":0,\"retryCount\":0},\"topFailureReasons\":[],\"recentFailures\":[]}"
+  },
+  {
+    "name": "program create coach",
+    "method": "POST",
+    "path": "/api/programs",
+    "expected": "201",
+    "status": 201,
+    "pass": true,
+    "bodySnippet": "{\"id\":\"cmpv2xcwl000dpj01e9qdipuf\",\"userId\":\"cmo0cedj50002k3vognia6gup\",\"name\":\"QA Program\",\"category\":\"Fitness\",\"startDate\":\"2026-06-01T10:42:15.572Z\",\"endDate\":null,\"status\":\"active\",\"createdAt\":\"2026-06-01T10:42:15.573Z\",\"days\":[{\"id\":\"cmpv2xcwl000epj01sxivnmn1\",\"programId\":\"cmpv2xcwl000dpj01e9qdi..."
+  },
+  {
+    "name": "program get student owner ok",
+    "method": "GET",
+    "path": "/api/programs/cmpv2xcwl000dpj01e9qdipuf",
+    "expected": "200",
+    "status": 200,
+    "pass": true,
+    "bodySnippet": "{\"id\":\"cmpv2xcwl000dpj01e9qdipuf\",\"userId\":\"cmo0cedj50002k3vognia6gup\",\"name\":\"QA Program\",\"category\":\"Fitness\",\"startDate\":\"2026-06-01T10:42:15.572Z\",\"endDate\":null,\"status\":\"active\",\"createdAt\":\"2026-06-01T10:42:15.573Z\",\"user\":{\"id\":\"cmo0cedj50002k3vognia6gup\",\"name\":\"QA Student Updated\",\"coachId..."
+  },
+  {
+    "name": "program get unrelated student forbidden",
+    "method": "GET",
+    "path": "/api/programs/cmpv2xcwl000dpj01e9qdipuf",
+    "expected": "403",
+    "status": 403,
+    "pass": true,
+    "bodySnippet": "{\"error\":\"Yetkisiz\"}"
+  },
+  {
+    "name": "program update coach ok",
+    "method": "PUT",
+    "path": "/api/programs/cmpv2xcwl000dpj01e9qdipuf",
+    "expected": "200",
+    "status": 200,
+    "pass": true,
+    "bodySnippet": "{\"id\":\"cmpv2xcwl000dpj01e9qdipuf\",\"userId\":\"cmo0cedj50002k3vognia6gup\",\"name\":\"QA Program Updated\",\"category\":\"Fitness\",\"startDate\":\"2026-06-01T10:42:15.572Z\",\"endDate\":null,\"status\":\"active\",\"createdAt\":\"2026-06-01T10:42:15.573Z\",\"days\":[{\"id\":\"cmpv2xcys000gpj0157n4t87c\",\"programId\":\"cmpv2xcwl000dp..."
+  },
+  {
+    "name": "program delete coach ok",
+    "method": "DELETE",
+    "path": "/api/programs/cmpv2xcwl000dpj01e9qdipuf",
+    "expected": "200",
+    "status": 200,
+    "pass": true,
+    "bodySnippet": "{\"success\":true}"
+  },
+  {
+    "name": "diet create coach",
+    "method": "POST",
+    "path": "/api/diet",
+    "expected": "201",
+    "status": 201,
+    "pass": true,
+    "bodySnippet": "{\"id\":\"cmpv2xd0e000lpj01mtpwuq7s\",\"userId\":\"cmo0cedj50002k3vognia6gup\",\"name\":\"QA Diet\",\"startDate\":\"2026-06-01T10:42:15.710Z\",\"active\":true,\"dailyCalorieTarget\":2200,\"proteinTarget\":130,\"carbsTarget\":220,\"fatTarget\":70,\"waterTarget\":3000,\"createdAt\":\"2026-06-01T10:42:15.711Z\",\"meals\":[{\"id\":\"cmpv2x..."
+  },
+  {
+    "name": "diet get student owner ok",
+    "method": "GET",
+    "path": "/api/diet/cmpv2xd0e000lpj01mtpwuq7s",
+    "expected": "200",
+    "status": 200,
+    "pass": true,
+    "bodySnippet": "{\"id\":\"cmpv2xd0e000lpj01mtpwuq7s\",\"userId\":\"cmo0cedj50002k3vognia6gup\",\"name\":\"QA Diet\",\"startDate\":\"2026-06-01T10:42:15.710Z\",\"active\":true,\"dailyCalorieTarget\":2200,\"proteinTarget\":130,\"carbsTarget\":220,\"fatTarget\":70,\"waterTarget\":3000,\"createdAt\":\"2026-06-01T10:42:15.711Z\",\"user\":{\"id\":\"cmo0cedj..."
+  },
+  {
+    "name": "diet get unrelated student forbidden",
+    "method": "GET",
+    "path": "/api/diet/cmpv2xd0e000lpj01mtpwuq7s",
+    "expected": "403",
+    "status": 403,
+    "pass": true,
+    "bodySnippet": "{\"error\":\"Yetkisiz\"}"
+  },
+  {
+    "name": "diet update coach ok",
+    "method": "PUT",
+    "path": "/api/diet/cmpv2xd0e000lpj01mtpwuq7s",
+    "expected": "200",
+    "status": 200,
+    "pass": true,
+    "bodySnippet": "{\"id\":\"cmpv2xd0e000lpj01mtpwuq7s\",\"userId\":\"cmo0cedj50002k3vognia6gup\",\"name\":\"QA Diet Updated\",\"startDate\":\"2026-06-01T10:42:15.710Z\",\"active\":true,\"dailyCalorieTarget\":2100,\"proteinTarget\":120,\"carbsTarget\":210,\"fatTarget\":65,\"waterTarget\":3000,\"createdAt\":\"2026-06-01T10:42:15.711Z\",\"meals\":[{\"id\"..."
+  },
+  {
+    "name": "diet delete coach ok",
+    "method": "DELETE",
+    "path": "/api/diet/cmpv2xd0e000lpj01mtpwuq7s",
+    "expected": "200",
+    "status": 200,
+    "pass": true,
+    "bodySnippet": "{\"success\":true}"
+  },
+  {
+    "name": "uploads unauth blocked",
+    "method": "GET",
+    "path": "/api/uploads/cmo0cedj50002k3vognia6gup/nonexistent.jpg",
+    "expected": "401",
+    "status": 401,
+    "pass": true,
+    "bodySnippet": "Unauthorized"
+  },
+  {
+    "name": "uploads traversal blocked with auth",
+    "method": "GET",
+    "path": "/api/uploads/../secrets.txt",
+    "expected": "400,404",
+    "status": 404,
+    "pass": true,
+    "bodySnippet": "<!doctype html>\n<html lang=\"en\">\n\t<head>\n\t\t<meta charset=\"UTF-8\">\n\t\t<title>404: Not Found</title>\n\t\t<style>\n\t\t\t:root {\n\t\t\t\t--gray-10: hsl(258, 7%, 10%);\n\t\t\t\t--gray-20: hsl(258, 7%, 20%);\n\t\t\t\t--gray-30: hsl(258, 7%, 30%);\n\t\t\t\t--gray-40: hsl(258, 7%, 40%);\n\t\t\t\t--gray-50: hsl(258, 7%, 50%);\n\t\t\t\t--gray-..."
+  },
+  {
+    "name": "analysis delete unauth blocked",
+    "method": "DELETE",
+    "path": "/api/analysis/nonexistent-analysis-id",
+    "expected": "401",
+    "status": 401,
+    "pass": true,
+    "bodySnippet": "{\"error\":\"Unauthorized\"}"
+  },
+  {
+    "name": "analysis upload student ok",
+    "method": "POST",
+    "path": "/api/analysis/upload",
+    "expected": "201",
+    "status": 201,
+    "pass": true,
+    "bodySnippet": "{\"id\":\"cmpv2xd6n000tpj01lo1evmu8\",\"userId\":\"cmo0cedj50002k3vognia6gup\",\"date\":\"2026-06-01T10:42:15.935Z\",\"imageUrl\":\"/api/uploads/cmo0cedj50002k3vognia6gup/analysis_1780310535921.png\",\"landmarks\":[{\"x\":0.5,\"y\":0.1,\"z\":0,\"id\":0,\"name\":\"nose\",\"visibility\":0.9},{\"x\":0.5841,\"y\":0.1242,\"z\":0,\"id\":1,\"name..."
+  },
+  {
+    "name": "analysis delete owner ok",
+    "method": "DELETE",
+    "path": "/api/analysis/cmpv2xd6n000tpj01lo1evmu8",
+    "expected": "200",
+    "status": 200,
+    "pass": true,
+    "bodySnippet": "{\"success\":true}"
+  }
+]

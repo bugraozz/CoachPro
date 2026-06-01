@@ -1,4 +1,4 @@
-﻿---
+---
 import MainLayout from '../../layouts/MainLayout.astro';
 import { getUserFromRequest, isCoach, isStudent } from '../../lib/auth';
 import prisma from '../../lib/prisma';
@@ -149,36 +149,34 @@ if (contacts.length > 0) {
 ---
 
 <MainLayout title="Mesajlar" activePage="messages">
-  <header class="px-6 lg:px-8 py-5 border-b border-border-default bg-bg-secondary/80 backdrop-blur-xl sticky top-0 z-50">
+  <header class="section-header">
     <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-      <div>
-        <h1 class="text-2xl font-bold text-text-primary">Mesajlar</h1>
-        <p class="text-sm text-text-secondary mt-1">
-          {isCoach(user) ? 'Öğrencilerinizle sohbet akışını buradan yönetebilirsiniz.' : 'Eğitmeninizle olan konuşmalarınız tek listede.'}
-        </p>
+      <div class="animate-in">
+        <h1>Mesajlar</h1>
+        <p>{isCoach(user) ? 'Öğrencilerinizle sohbet akışını buradan yönetebilirsiniz.' : 'Eğitmeninizle olan konuşmalarınız tek listede.'}</p>
       </div>
 
-      <div class="flex items-center gap-3 text-xs sm:text-sm">
-        <div class="px-3 py-2 rounded-xl border border-divider/40 bg-bg-primary text-text-secondary">
-          Sohbet: <span class="font-semibold text-text-primary">{contactCards.length}</span>
+      <div class="flex items-center gap-3 text-xs sm:text-sm animate-in-2">
+        <div class="px-3.5 py-2 rounded-xl border border-border-default bg-bg-card text-text-secondary shadow-sm">
+          Sohbet: <span class="font-bold text-text-primary">{contactCards.length}</span>
         </div>
-        <div class="px-3 py-2 rounded-xl border border-divider/40 bg-bg-primary text-text-secondary">
-          Okunmamış: <span class="font-semibold text-accent-primary">{totalUnread}</span>
+        <div class="px-3.5 py-2 rounded-xl border border-border-default bg-bg-card text-text-secondary shadow-sm">
+          Okunmamış: <span class="font-bold text-accent-primary">{totalUnread}</span>
         </div>
       </div>
     </div>
   </header>
 
-  <div class="p-6 lg:p-8 max-w-5xl mx-auto">
+  <div class="page-content max-w-5xl mx-auto">
     {contactCards.length > 0 ? (
       <div class="grid grid-cols-1 gap-3">
         {contactCards.map((contact) => (
           <a
             href={`/messages/${contact.id}`}
-            class="group rounded-2xl border border-divider/50 bg-bg-secondary/90 backdrop-blur-xl p-4 sm:p-5 hover:border-accent-primary/30 hover:shadow-lg hover:shadow-accent-primary/5 transition-all duration-200"
+            class="group card p-4 sm:p-5 hover:border-accent-primary/30 hover:shadow-lg hover:shadow-accent-primary/5 transition-all duration-200"
           >
             <div class="flex items-start gap-4">
-              <div class="relative w-13 h-13 rounded-full overflow-hidden bg-accent-primary/10 flex items-center justify-center text-accent-primary font-bold text-lg shrink-0 ring-1 ring-divider/40">
+              <div class="relative w-13 h-13 rounded-full overflow-hidden bg-accent-primary/10 flex items-center justify-center text-accent-primary font-bold text-lg shrink-0 ring-1 ring-border-default">
                 {contact.photoUrl ? (
                   <img src={contact.photoUrl} alt={contact.name} class="w-full h-full object-cover" />
                 ) : (
@@ -226,10 +224,12 @@ if (contacts.length > 0) {
         ))}
       </div>
     ) : (
-      <div class="rounded-2xl border border-divider/50 bg-bg-secondary p-12 text-center text-text-muted shadow-sm">
-        <svg xmlns="http://www.w3.org/2000/svg" width="52" height="52" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="mx-auto mb-4 opacity-50"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>
-        <p class="text-base font-medium text-text-secondary">Henüz sohbet edebileceğiniz bir kişi bulunmuyor.</p>
-        <p class="text-sm mt-1">Yeni bir öğrenci/eğitmen bağlantısı sonrası bu alan otomatik dolacaktır.</p>
+      <div class="empty-state animate-in">
+        <div class="empty-state-icon">
+          <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="text-text-muted"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>
+        </div>
+        <p class="empty-state-title">Henüz sohbet edebileceğiniz bir kişi bulunmuyor</p>
+        <p class="empty-state-description">Yeni bir öğrenci/eğitmen bağlantısı sonrası bu alan otomatik dolacaktır.</p>
       </div>
     )}
   </div>

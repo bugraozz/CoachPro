@@ -1,0 +1,263 @@
+---
+import MainLayout from '../../layouts/MainLayout.astro';
+import AdminSecurityPanel from '../../components/dashboard/AdminSecurityPanel';
+import { canManageAdminSecurity, getUserFromRequest, isBackofficeUser, isSuperAdmin } from '../../lib/auth';
+import prisma from '../../lib/prisma';
+import { createAdminInvite, getAdminInviteAppOrigin, getAdminInviteTtlHours, revokeAdminInvite } from '../../lib/admin-invites';
+
+const user = await getUserFromRequest(Astro.request);
+
+if (!user) {
+  return Astro.redirect('/auth/login');
+}
+
+if (!isBackofficeUser(user)) {
+  return Astro.redirect('/dashboard');
+}
+
+const prismaClient = prisma as any;
+const currentUser = user as NonNullable<typeof user>;
+const userCanManageAdminSecurity = canManageAdminSecurity(currentUser);
+const userIsSuperAdmin = isSuperAdmin(currentUser);
+
+let infoMessage = '';
+let errorMessage = '';
+let generatedInviteLink = '';
+let generatedInviteEmail = '';
+
+type AdminInviteRow = {
+  id: string;
+  email: string;
+  role: string;
+  invitedByUserId: string;
+  invitedByEmail?: string | null;
+  acceptedByUserId?: string | null;
+  acceptedAt?: Date | null;
+  expiresAt: Date;
+  createdAt: Date;
+};
+
+function getRequestIp(request: Request): string {
+  const forwardedFor = request.headers.get('x-forwarded-for');
+  if (forwardedFor) {
+    const firstIp = forwardedFor.split(',')[0]?.trim();
+    if (firstIp) {
+      return firstIp;
+    }
+  }
+
+  const realIp = request.headers.get('x-real-ip');
+  if (realIp) {
+    return realIp;
+  }
+
+  return 'unknown';
+}
+
+async function writeAdminAuditLog(payload: {
+  action: string;
+  targetEmail?: string | null;
+  metadata?: Record<string, unknown>;
+}): Promise<void> {
+  try {
+    await prismaClient.adminActionAudit.create({
+      data: {
+        action: payload.action,
+        adminUserId: currentUser.id,
+        adminEmail: currentUser.email || null,
+        targetEmail: payload.targetEmail || null,
+        metadata: {
+          ...(payload.metadata || {}),
+          ip: getRequestIp(Astro.request),
+          userAgent: Astro.request.headers.get('user-agent') || null,
+          requestPath: Astro.url.pathname,
+        },
+      },
+    });
+  } catch (auditError) {
+    console.error('Admin security audit log write failed:', auditError);
+  }
+}
+
+function formatRoleLabel(role: string): string {
+  if (role === 'super_admin') return 'Super Admin';
+  if (role === 'admin') return 'Admin';
+  if (role === 'coach') return 'Egitmen';
+  return 'Ogrenci';
+}
+
+if (Astro.request.method === 'POST') {
+  const formData = await Astro.request.formData();
+  const action = String(formData.get('action') || '').trim();
+
+  try {
+    if (!userCanManageAdminSecurity) {
+      throw new Error('Bu islemi sadece super admin yapabilir.');
+    }
+
+    if (action === 'create_admin_invite') {
+      const email = String(formData.get('email') || '').trim().toLowerCase();
+      const role = String(formData.get('role') || 'admin').trim().toLowerCase();
+      const ttlHoursRaw = Number.parseInt(String(formData.get('ttlHours') || '').trim(), 10);
+      const ttlHours = Number.isFinite(ttlHoursRaw) ? ttlHoursRaw : getAdminInviteTtlHours();
+
+      if (!email) {
+        throw new Error('E-posta adresi gereklidir.');
+      }
+
+      if (!['admin', 'super_admin'].includes(role)) {
+        throw new Error('Gecerli bir admin rol secilmelidir.');
+      }
+
+      const existingUser = await prisma.user.findUnique({
+        where: { email },
+        select: { id: true, role: true, email: true },
+      });
+
+      if (!existingUser) {
+        throw new Error('Bu e-posta ile kayitli bir kullanici bulunamadi.');
+      }
+
+      if (['admin', 'super_admin'].includes(String(existingUser.role || '').toLowerCase())) {
+        throw new Error('Bu kullanici zaten backoffice rolune sahip.');
+      }
+
+      const inviteResult = await createAdminInvite({
+        email,
+        role,
+        invitedByUserId: currentUser.id,
+        invitedByEmail: currentUser.email,
+        ttlHours,
+      });
+
+      const appOrigin = getAdminInviteAppOrigin(Astro.request);
+      const acceptUrl = `${appOrigin}/auth/admin-invite?token=${encodeURIComponent(inviteResult.token)}`;
+
+      generatedInviteLink = acceptUrl;
+      generatedInviteEmail = email;
+      infoMessage = 'Admin daveti olusturuldu. Link tek seferlik olarak asagida gosteriliyor.';
+
+      await writeAdminAuditLog({
+        action,
+        targetEmail: email,
+        metadata: {
+          role,
+          inviteId: inviteResult.record.id,
+          expiresAt: inviteResult.record.expiresAt.toISOString(),
+          ttlHours,
+        },
+      });
+    } else if (action === 'revoke_admin_invite') {
+      const inviteId = String(formData.get('inviteId') || '').trim();
+      if (!inviteId) {
+        throw new Error('Davet secilemedi.');
+      }
+
+      const revoked = await revokeAdminInvite({
+        inviteId,
+        revokedByUserId: currentUser.id,
+        revokedByEmail: currentUser.email,
+      });
+
+      if (!revoked) {
+        throw new Error('Davet zaten kullanilmis veya iptal edilmis olabilir.');
+      }
+
+      infoMessage = 'Davet basariyla iptal edildi.';
+
+      await writeAdminAuditLog({
+        action,
+        metadata: {
+          inviteId,
+        },
+      });
+    }
+  } catch (postError) {
+    errorMessage = postError instanceof Error ? postError.message : 'Islem tamamlanamadi.';
+  }
+}
+
+const [backofficeUsers, pendingInvites, acceptedInvites] = await Promise.all([
+  prisma.user.findMany({
+    where: {
+      role: {
+        in: ['admin', 'super_admin'],
+      },
+    },
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      role: true,
+      active: true,
+      createdAt: true,
+    },
+    orderBy: [
+      { role: 'desc' },
+      { createdAt: 'desc' },
+    ],
+    take: 120,
+  }),
+  prismaClient.adminInvitation.findMany({
+    where: {
+      acceptedAt: null,
+      revokedAt: null,
+      expiresAt: { gt: new Date() },
+    },
+    orderBy: { createdAt: 'desc' },
+    take: 80,
+  }),
+  prismaClient.adminInvitation.findMany({
+    where: {
+      acceptedAt: { not: null },
+    },
+    orderBy: { acceptedAt: 'desc' },
+    take: 40,
+  }),
+]);
+
+const pendingInvitesList = (pendingInvites || []) as AdminInviteRow[];
+const acceptedInvitesList = (acceptedInvites || []) as AdminInviteRow[];
+---
+<MainLayout title="Admin Guvenlik" activePage="admin-security">
+  <AdminSecurityPanel
+    client:load
+    isSuperAdmin={userIsSuperAdmin}
+    canManageSecurity={userCanManageAdminSecurity}
+    infoMessage={infoMessage}
+    errorMessage={errorMessage}
+    generatedInviteLink={generatedInviteLink}
+    generatedInviteEmail={generatedInviteEmail}
+    backofficeUsers={backofficeUsers.map((u) => ({
+      id: u.id,
+      name: u.name,
+      email: u.email,
+      role: u.role,
+      active: u.active,
+      createdAt: u.createdAt.toISOString(),
+    }))}
+    pendingInvites={pendingInvitesList.map((inv) => ({
+      id: inv.id,
+      email: inv.email,
+      role: String(inv.role || 'admin'),
+      invitedByUserId: inv.invitedByUserId,
+      invitedByEmail: inv.invitedByEmail || null,
+      acceptedByUserId: inv.acceptedByUserId || null,
+      acceptedAt: inv.acceptedAt ? new Date(inv.acceptedAt).toISOString() : null,
+      expiresAt: new Date(inv.expiresAt).toISOString(),
+      createdAt: new Date(inv.createdAt).toISOString(),
+    }))}
+    acceptedInvites={acceptedInvitesList.map((inv) => ({
+      id: inv.id,
+      email: inv.email,
+      role: String(inv.role || 'admin'),
+      invitedByUserId: inv.invitedByUserId,
+      invitedByEmail: inv.invitedByEmail || null,
+      acceptedByUserId: inv.acceptedByUserId || null,
+      acceptedAt: inv.acceptedAt ? new Date(inv.acceptedAt).toISOString() : null,
+      expiresAt: new Date(inv.expiresAt).toISOString(),
+      createdAt: new Date(inv.createdAt).toISOString(),
+    }))}
+    defaultTtlHours={getAdminInviteTtlHours()}
+  />
+</MainLayout>

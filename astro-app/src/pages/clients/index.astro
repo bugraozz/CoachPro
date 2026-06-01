@@ -1,9 +1,22 @@
 ---
 import MainLayout from '../../layouts/MainLayout.astro';
 import prisma from '../../lib/prisma';
+import { getUserFromRequest, isCoach } from '../../lib/auth';
+
+const currentUser = await getUserFromRequest(Astro.request);
+if (!currentUser) {
+  return Astro.redirect('/auth/login');
+}
+
+if (!isCoach(currentUser)) {
+  return Astro.redirect('/dashboard');
+}
 
 const clients = await prisma.user.findMany({
-  where: { role: 'student' },
+  where: {
+    role: 'student',
+    coachId: currentUser.id,
+  },
   include: {
     weightHistory: { orderBy: { date: 'desc' }, take: 1 },
     programs: { where: { status: 'active' } },
@@ -27,7 +40,7 @@ const clients = await prisma.user.findMany({
           <input
             type="text"
             placeholder="Müşteri ara..."
-            class="input-field pl-11 w-full sm:w-[280px]"
+            class="input-field pl-11 w-full sm:w-70"
             id="searchInput"
           />
         </div>
@@ -58,7 +71,7 @@ const clients = await prisma.user.findMany({
             
             {/* Profile */}
             <div class="flex items-center gap-4 mb-5">
-              <div class="w-14 h-14 rounded-2xl bg-gradient-to-br from-accent-primary to-accent-purple flex items-center justify-center text-xl font-bold text-white shrink-0 overflow-hidden shadow-lg group-hover:shadow-xl transition-shadow">
+              <div class="w-14 h-14 rounded-2xl bg-linear-to-br from-accent-primary to-accent-purple flex items-center justify-center text-xl font-bold text-white shrink-0 overflow-hidden shadow-lg group-hover:shadow-xl transition-shadow">
                 {client.photoUrl ? (
                   <img src={client.photoUrl} alt={client.name} class="w-full h-full object-cover" />
                 ) : (

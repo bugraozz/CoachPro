@@ -1,0 +1,90 @@
+---
+import { getHomeTextOverrides } from '../lib/site-content';
+import PublicLayout from '../layouts/PublicLayout.astro';
+
+const textOverrides = await getHomeTextOverrides();
+
+const faqText = (key: string, fallback: string): string => {
+  const value = textOverrides[key];
+  if (typeof value !== 'string') {
+    return fallback;
+  }
+
+  const normalized = value.trim();
+  return normalized || fallback;
+};
+
+const faqItems = [
+  {
+    question: faqText('faq.q1.question', 'CoachPro nedir ve kimler icin?'),
+    answer: faqText('faq.q1.answer', 'CoachPro, kisisel antrenorler ve ogrencileri icin tasarlanmis bir fitness kocluluk platformudur.'),
+  },
+  {
+    question: faqText('faq.q2.question', 'Referans kodu sistemi nasil calisir?'),
+    answer: faqText('faq.q2.answer', 'Her egitmen referans kodu alir. Ogrenciler kayitta bu kodu girerek egitmenleriyle eslesir.'),
+  },
+  {
+    question: faqText('faq.q3.question', 'AI vucut analizi nasil yapiliyor?'),
+    answer: faqText('faq.q3.answer', 'MediaPipe tabanli analiz ile eklem noktalariniz tespit edilir ve postur degerlendirmesi olusturulur.'),
+  },
+  {
+    question: faqText('faq.q4.question', 'Ogrenciler icin ucret var mi?'),
+    answer: faqText('faq.q4.answer', 'Ogrenciler platforma ucretsiz katilabilir; odeme modeli egitmen paketleri uzerinden ilerler.'),
+  },
+  {
+    question: faqText('faq.q5.question', 'Kac ogrenci ekleyebilirim?'),
+    answer: faqText('faq.q5.answer', 'Egitmen planinda sinirsiz ogrenci ekleyebilir ve her ogrenciye ayri plan tanimlayabilirsiniz.'),
+  },
+];
+---
+
+<PublicLayout
+  title="CoachPro - SSS"
+  description="CoachPro sikca sorulan sorular"
+  bodyClass="min-h-screen bg-bg-primary"
+>
+  <header class="border-b border-border-default bg-white/90 backdrop-blur-xl sticky top-0 z-40">
+    <div class="max-w-4xl mx-auto px-6 py-4 flex items-center justify-between">
+      <a href="/" class="font-bold text-xl text-text-primary">CoachPro</a>
+      <div class="flex items-center gap-4 text-sm">
+        <a href="/about" class="text-text-secondary hover:text-text-primary transition-colors">About</a>
+        <a href="/auth/register" class="btn-primary">Ucretsiz Basla</a>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-4xl mx-auto px-6 py-14">
+    <div class="text-center mb-12">
+      <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-red-50 border border-red-200 text-red-600 text-xs font-semibold mb-4">
+        {faqText('faq.page.badge', 'SSS')}
+      </div>
+      <h1 class="text-4xl font-bold text-text-primary mb-4">{faqText('faq.page.title', 'Sikca Sorulan Sorular')}</h1>
+      <p class="text-text-secondary max-w-2xl mx-auto leading-relaxed">
+        {faqText('faq.page.subtitle', 'Platform kullanimina dair en cok merak edilen konulari burada bulabilirsiniz.')}
+      </p>
+    </div>
+
+    <div class="space-y-4">
+      {faqItems.map((item) => (
+        <details class="group rounded-xl border border-border-default bg-white overflow-hidden">
+          <summary class="flex items-center justify-between p-5 cursor-pointer hover:bg-bg-tertiary/30 transition-colors">
+            <span class="font-semibold text-text-primary">{item.question}</span>
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-text-muted group-open:rotate-180 transition-transform"><path d="m6 9 6 6 6-6"/></svg>
+          </summary>
+          <div class="px-5 pb-5 text-text-secondary text-sm leading-relaxed">{item.answer}</div>
+        </details>
+      ))}
+    </div>
+  </main>
+
+  <footer class="py-10 px-6 border-t border-border-default bg-white/80">
+    <div class="max-w-4xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4 text-sm text-text-secondary">
+      <span>{faqText('footer.copyright', '© 2024 CoachPro. Tum haklari saklidir.')}</span>
+      <div class="flex items-center gap-5">
+        <a href="/privacy" class="hover:text-text-primary transition-colors">{faqText('footer.link.privacy', 'Gizlilik')}</a>
+        <a href="/terms" class="hover:text-text-primary transition-colors">{faqText('footer.link.terms', 'Kullanim Sartlari')}</a>
+        <a href="/contact" class="hover:text-text-primary transition-colors">{faqText('footer.link.contact', 'Iletisim')}</a>
+      </div>
+    </div>
+  </footer>
+</PublicLayout>

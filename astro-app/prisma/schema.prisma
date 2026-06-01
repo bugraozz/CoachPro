@@ -9,24 +9,24 @@ datasource db {
 
 // KullanÄ±cÄ± modeli - EÄŸitmen ve Ã–ÄŸrenci
 model User {
-  id            String   @id @default(cuid())
-  email         String   @unique
-  password      String
-  name          String
-  role          String   @default("student") // "coach" veya "student"
-  phone         String?
-  photoUrl      String?
-  referralCode  String?  @unique // EÄŸitmenin referans kodu
-  
+  id           String  @id @default(cuid())
+  email        String  @unique
+  password     String
+  name         String
+  role         String  @default("student") // "student" | "coach" | "admin" | "super_admin"
+  phone        String?
+  photoUrl     String?
+  referralCode String? @unique // EÄŸitmenin referans kodu
+
   // Ã–deme bilgileri (EÄŸitmenler iÃ§in)
-  subscriptionStatus String?   // "active", "cancelled", "past_due"
-  subscriptionId     String?   // Iyzico payment ID
+  subscriptionStatus String? // "active", "cancelled", "past_due"
+  subscriptionId     String? // Iyzico payment ID
   subscriptionEnd    DateTime?
 
   // Iyzico payout onboarding (Egitmen pazaryeri hesabi)
-  iyzicoSubMerchantKey        String?  @unique
-  iyzicoSubMerchantExternalId String?  @unique
-  iyzicoSubMerchantType       String?  @default("PERSONAL") // PERSONAL | PRIVATE_COMPANY
+  iyzicoSubMerchantKey        String?   @unique
+  iyzicoSubMerchantExternalId String?   @unique
+  iyzicoSubMerchantType       String?   @default("PERSONAL") // PERSONAL | PRIVATE_COMPANY
   iyzicoSubMerchantStatus     String?
   iyzicoIdentityNumber        String?
   iyzicoIban                  String?
@@ -40,12 +40,12 @@ model User {
   iyzicoPayoutReadyAt         DateTime?
   iyzicoLastSyncAt            DateTime?
   iyzicoLastError             String?
-  
+
   // Ã–ÄŸrenci bilgileri
-  coachId       String?  // Ã–ÄŸrencinin baÄŸlÄ± olduÄŸu eÄŸitmen
-  coach         User?    @relation("CoachStudents", fields: [coachId], references: [id])
-  students      User[]   @relation("CoachStudents")
-  
+  coachId  String? // Ã–ÄŸrencinin baÄŸlÄ± olduÄŸu eÄŸitmen
+  coach    User?   @relation("CoachStudents", fields: [coachId], references: [id])
+  students User[]  @relation("CoachStudents")
+
   // Ã–ÄŸrenci profil bilgileri
   gender        String?
   age           Int?
@@ -55,44 +55,50 @@ model User {
   healthNotes   String?
 
   // Ogrenci odeme bilgileri
-  studentPaymentStatus String?   // "pending", "paid", "failed"
+  studentPaymentStatus String? // "pending", "paid", "failed"
   studentPaidAt        DateTime?
+  studentAccessEnd     DateTime?
   selectedPackageId    String?
   selectedPackage      CoachPackage? @relation("StudentSelectedPackage", fields: [selectedPackageId], references: [id], onDelete: SetNull)
-  
-  active        Boolean  @default(true)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+
+  active           Boolean   @default(true)
+  resetToken       String?   @unique
+  resetTokenExpiry DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
   // Ä°liÅŸkiler
-  weightHistory  WeightRecord[]
-  measurements   Measurement[]
-  bodyAnalyses   BodyAnalysis[]
-  programs       Program[]
-  dietPlans      DietPlan[]
-  sessions       Session[]
-  sentMessages     Message[] @relation("SentMessages")
-  receivedMessages Message[] @relation("ReceivedMessages")
-  coachPackages     CoachPackage[] @relation("CoachPackages")
+  weightHistory       WeightRecord[]
+  measurements        Measurement[]
+  bodyAnalyses        BodyAnalysis[]
+  programs            Program[]
+  dietPlans           DietPlan[]
+  sessions            Session[]
+  sentMessages        Message[]            @relation("SentMessages")
+  receivedMessages    Message[]            @relation("ReceivedMessages")
+  coachPackages       CoachPackage[]       @relation("CoachPackages")
   paymentTransactions PaymentTransaction[] @relation("PayerTransactions")
   coachedTransactions PaymentTransaction[] @relation("CoachTransactions")
   studentTransactions PaymentTransaction[] @relation("StudentTransactions")
+  notifications       Notification[]       @relation("UserNotifications")
+  actedNotifications  Notification[]       @relation("ActorNotifications")
+  deviceTokens        DeviceToken[]
 
   @@map("users")
 }
 
 model CoachPackage {
-  id            String   @id @default(cuid())
+  id            String               @id @default(cuid())
   coachId       String
-  coach         User     @relation("CoachPackages", fields: [coachId], references: [id], onDelete: Cascade)
+  coach         User                 @relation("CoachPackages", fields: [coachId], references: [id], onDelete: Cascade)
   name          String
   description   String?
   price         Int
-  durationWeeks Int      @default(4)
-  isActive      Boolean  @default(true)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-  students      User[]   @relation("StudentSelectedPackage")
+  durationWeeks Int                  @default(4)
+  isActive      Boolean              @default(true)
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+  students      User[]               @relation("StudentSelectedPackage")
   transactions  PaymentTransaction[] @relation("PackageTransactions")
 
   @@index([coachId, isActive])
@@ -100,28 +106,28 @@ model CoachPackage {
 }
 
 model PaymentTransaction {
-  id                 String   @id @default(cuid())
+  id                 String        @id @default(cuid())
   payerId            String
-  payer              User     @relation("PayerTransactions", fields: [payerId], references: [id], onDelete: Cascade)
+  payer              User          @relation("PayerTransactions", fields: [payerId], references: [id], onDelete: Cascade)
   coachId            String?
-  coach              User?    @relation("CoachTransactions", fields: [coachId], references: [id], onDelete: SetNull)
+  coach              User?         @relation("CoachTransactions", fields: [coachId], references: [id], onDelete: SetNull)
   studentId          String?
-  student            User?    @relation("StudentTransactions", fields: [studentId], references: [id], onDelete: SetNull)
+  student            User?         @relation("StudentTransactions", fields: [studentId], references: [id], onDelete: SetNull)
   packageId          String?
   coachPackage       CoachPackage? @relation("PackageTransactions", fields: [packageId], references: [id], onDelete: SetNull)
   type               String
-  provider           String   @default("iyzico")
-  status             String   @default("pending")
+  provider           String        @default("iyzico")
+  status             String        @default("pending")
   amount             Int
-  currency           String   @default("try")
-  externalPaymentId  String?  @unique
+  currency           String        @default("try")
+  externalPaymentId  String?       @unique
   externalCustomerId String?
   description        String?
   metadata           Json?
   paidAt             DateTime?
   failedAt           DateTime?
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
 
   @@index([payerId, createdAt])
   @@index([coachId, createdAt])
@@ -151,12 +157,49 @@ model SystemSetting {
   @@map("system_settings")
 }
 
+model AdminActionAudit {
+  id           String   @id @default(cuid())
+  action       String
+  adminUserId  String
+  adminEmail   String?
+  targetUserId String?
+  targetEmail  String?
+  metadata     Json?
+  createdAt    DateTime @default(now())
+
+  @@index([adminUserId, createdAt])
+  @@index([targetUserId, createdAt])
+  @@index([action, createdAt])
+  @@map("admin_action_audits")
+}
+
+model AdminInvitation {
+  id               String    @id @default(cuid())
+  email            String
+  role             String    @default("admin")
+  tokenHash        String    @unique
+  invitedByUserId  String
+  invitedByEmail   String?
+  acceptedByUserId String?
+  acceptedAt       DateTime?
+  revokedAt        DateTime?
+  expiresAt        DateTime
+  metadata         Json?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([email, expiresAt])
+  @@index([invitedByUserId, createdAt])
+  @@index([acceptedByUserId, acceptedAt])
+  @@map("admin_invitations")
+}
+
 model WeightRecord {
-  id       String   @id @default(cuid())
-  userId   String
-  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  weight   Float
-  date     DateTime @default(now())
+  id     String   @id @default(cuid())
+  userId String
+  user   User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  weight Float
+  date   DateTime @default(now())
 
   @@map("weight_records")
 }
@@ -198,15 +241,15 @@ model BodyAnalysis {
 }
 
 model Program {
-  id        String    @id @default(cuid())
+  id        String       @id @default(cuid())
   userId    String
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   name      String
-  category  String?   @default("Fitness") // Fitness, YÃ¼zme, Pilates vb.
+  category  String?      @default("Fitness") // Fitness, YÃ¼zme, Pilates vb.
   startDate DateTime
   endDate   DateTime?
-  status    String    @default("active")
-  createdAt DateTime  @default(now())
+  status    String       @default("active")
+  createdAt DateTime     @default(now())
   days      ProgramDay[]
 
   @@map("programs")
@@ -240,18 +283,18 @@ model Exercise {
 }
 
 model DietPlan {
-  id                 String   @id @default(cuid())
+  id                 String           @id @default(cuid())
   userId             String
-  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user               User             @relation(fields: [userId], references: [id], onDelete: Cascade)
   name               String
   startDate          DateTime
-  active             Boolean  @default(true)
+  active             Boolean          @default(true)
   dailyCalorieTarget Int
   proteinTarget      Int
   carbsTarget        Int
   fatTarget          Int
-  waterTarget        Int      @default(3000)
-  createdAt          DateTime @default(now())
+  waterTarget        Int              @default(3000)
+  createdAt          DateTime         @default(now())
   meals              Meal[]
   compliance         DietCompliance[]
 
@@ -259,7 +302,7 @@ model DietPlan {
 }
 
 model Meal {
-  id         String @id @default(cuid())
+  id         String   @id @default(cuid())
   dietPlanId String
   dietPlan   DietPlan @relation(fields: [dietPlanId], references: [id], onDelete: Cascade)
   name       String
@@ -296,27 +339,53 @@ model DietCompliance {
   @@map("diet_compliance")
 }
 
-
-
-
 model Message {
-  id         String   @id @default(cuid())
-  content    String?
-  messageType String  @default("text") // text | image | file
-  senderId   String
-  receiverId String
-  fileUrl    String?
-  fileName   String?
+  id           String   @id @default(cuid())
+  content      String?
+  messageType  String   @default("text") // text | image | file
+  senderId     String
+  receiverId   String
+  fileUrl      String?
+  fileName     String?
   fileMimeType String?
-  fileSize   Int?
-  createdAt  DateTime @default(now())
-  read       Boolean  @default(false)
+  fileSize     Int?
+  createdAt    DateTime @default(now())
+  read         Boolean  @default(false)
 
-  sender     User     @relation("SentMessages", fields: [senderId], references: [id])
-  receiver   User     @relation("ReceivedMessages", fields: [receiverId], references: [id])
+  sender   User @relation("SentMessages", fields: [senderId], references: [id])
+  receiver User @relation("ReceivedMessages", fields: [receiverId], references: [id])
 
   @@index([senderId])
   @@index([receiverId])
   @@map("messages")
 }
 
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation("UserNotifications", fields: [userId], references: [id], onDelete: Cascade)
+  actorId   String?
+  actor     User?    @relation("ActorNotifications", fields: [actorId], references: [id], onDelete: SetNull)
+  type      String
+  title     String?
+  body      String?
+  payload   Json?
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId, read, createdAt])
+  @@map("notifications")
+}
+
+model DeviceToken {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String   @unique
+  platform  String? // 'android' | 'ios' | 'web'
+  revoked   Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@map("device_tokens")
+}

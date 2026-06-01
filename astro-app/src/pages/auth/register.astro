@@ -1,7 +1,17 @@
 ---
 import ShapeGrid from '../../components/ShapeGrid';
-import { hashPassword, generateReferralCode, getUserFromRequest } from '../../lib/auth';
+import {
+  hashPassword,
+  generateReferralCode,
+  hasActiveSubscription,
+  getUserFromRequest,
+  createSession,
+  createSessionCookie,
+  createPaymentAccessToken,
+  createPaymentAccessCookie,
+} from '../../lib/auth';
 import prisma from '../../lib/prisma';
+import PublicLayout from '../../layouts/PublicLayout.astro';
 
 const existingUser = await getUserFromRequest(Astro.request);
 if (existingUser) {
@@ -19,9 +29,11 @@ if (Astro.request.method === 'POST') {
   const confirmPassword = formData.get('confirmPassword') as string;
   const role = formData.get('role') as string;
   const referralCode = formData.get('referralCode') as string;
+  const normalizedName = String(name || '').trim();
+  const normalizedEmail = String(email || '').trim().toLowerCase();
 
   // Validasyon
-  if (!name || !email || !password || !role) {
+  if (!normalizedName || !normalizedEmail || !password || !role) {
     error = 'Tüm alanları doldurun.';
   } else if (password !== confirmPassword) {
     error = 'Şifreler eşleşmiyor.';
@@ -29,82 +41,169 @@ if (Astro.request.method === 'POST') {
     error = 'Şifre en az 6 karakter olmalıdır.';
   } else {
     // Email kontrolü
-    const existingEmail = await prisma.user.findUnique({ where: { email } });
+    const existingEmail = await prisma.user.findUnique({ where: { email: normalizedEmail } });
     if (existingEmail) {
       error = 'Bu e-posta adresi zaten kullanılıyor.';
     } else {
-      // Öğrenci ise referans kodu kontrolü
-      let coachId: string | null = null;
-      if (role === 'student') {
-        if (!referralCode) {
-          error = 'Öğrenci olarak kayıt olmak için eğitmen referans kodu gereklidir.';
-        } else {
-          const coach = await prisma.user.findFirst({
-            where: { referralCode: referralCode.toUpperCase(), role: 'coach' }
-          });
-          if (!coach) {
-            error = 'Geçersiz referans kodu.';
-          } else if (coach.subscriptionStatus !== 'active') {
-            error = 'Bu eğitmenin aktif aboneliği bulunmuyor.';
-          } else {
-            const activePackageCount = await prisma.coachPackage.count({
+      const buildPaymentRedirect = async (targetUserId: string) => {
+        const paymentToken = createPaymentAccessToken(targetUserId);
+
+        const headers = new Headers();
+        headers.set('Location', `/auth/payment?userId=${encodeURIComponent(targetUserId)}`);
+        headers.append('Set-Cookie', createPaymentAccessCookie(paymentToken));
+
+        return new Response(null, {
+          status: 302,
+          headers,
+        });
+      };
+
+      try {
+        const hashedPassword = await hashPassword(password);
+
+        const createResult = await prisma.$transaction(async (tx: any) => {
+          // Serialize first-account bootstrap decision to avoid race-condition admin escalation.
+          await tx.$executeRawUnsafe('SELECT pg_advisory_xact_lock(72839174)');
+
+          const [totalUsers, backofficeUsers] = await Promise.all([
+            tx.user.count(),
+            tx.user.count({
+              where: {
+                role: {
+                  in: ['admin', 'super_admin'],
+                },
+              },
+            }),
+          ]);
+
+          const shouldBootstrapSuperAdmin = totalUsers === 0 && backofficeUsers === 0;
+
+          if (shouldBootstrapSuperAdmin) {
+            const bootstrapUser = await tx.user.create({
+              data: {
+                name: normalizedName,
+                email: normalizedEmail,
+                password: hashedPassword,
+                role: 'super_admin',
+                active: true,
+              },
+              select: {
+                id: true,
+                email: true,
+              },
+            });
+
+            await tx.adminActionAudit.create({
+              data: {
+                action: 'bootstrap_super_admin_auto_register',
+                adminUserId: bootstrapUser.id,
+                adminEmail: bootstrapUser.email,
+                targetUserId: bootstrapUser.id,
+                targetEmail: bootstrapUser.email,
+                metadata: {
+                  source: 'register_first_account',
+                },
+              },
+            });
+
+            return {
+              userId: bootstrapUser.id,
+              flow: 'super_admin',
+            } as const;
+          }
+
+          if (role === 'student') {
+            if (!referralCode) {
+              throw new Error('Öğrenci olarak kayıt olmak için eğitmen referans kodu gereklidir.');
+            }
+
+            const coach = await tx.user.findFirst({
+              where: { referralCode: referralCode.toUpperCase(), role: 'coach' },
+            });
+
+            if (!coach) {
+              throw new Error('Geçersiz referans kodu.');
+            }
+
+            if (!hasActiveSubscription(coach)) {
+              throw new Error('Bu eğitmenin aktif aboneliği bulunmuyor.');
+            }
+
+            const activePackageCount = await tx.coachPackage.count({
               where: { coachId: coach.id, isActive: true },
             });
 
             if (activePackageCount === 0) {
-              error = 'Bu eğitmenin aktif paketi bulunmuyor. Lütfen eğitmeninizle iletişime geçin.';
-            } else {
-              coachId = coach.id;
+              throw new Error('Bu eğitmenin aktif paketi bulunmuyor. Lütfen eğitmeninizle iletişime geçin.');
             }
-          }
-        }
-      }
 
-      if (!error) {
-        if (role === 'coach') {
-          const hashedPassword = await hashPassword(password);
-          const user = await prisma.user.create({
+            const studentUser = await tx.user.create({
+              data: {
+                name: normalizedName,
+                email: normalizedEmail,
+                password: hashedPassword,
+                role: 'student',
+                coachId: coach.id,
+                active: false,
+                studentPaymentStatus: 'pending',
+              },
+              select: { id: true },
+            });
+
+            return {
+              userId: studentUser.id,
+              flow: 'payment',
+            } as const;
+          }
+
+          const coachUser = await tx.user.create({
             data: {
-              name,
-              email,
+              name: normalizedName,
+              email: normalizedEmail,
               password: hashedPassword,
               role: 'coach',
               referralCode: generateReferralCode(),
               subscriptionStatus: 'pending',
               active: false,
             },
+            select: { id: true },
           });
-          return Astro.redirect(`/auth/payment?userId=${user.id}`);
-        }
 
-        const hashedPassword = await hashPassword(password);
-        const user = await prisma.user.create({
-          data: {
-            name,
-            email,
-            password: hashedPassword,
-            role: 'student',
-            coachId,
-            active: false,
-            studentPaymentStatus: 'pending',
-          },
+          return {
+            userId: coachUser.id,
+            flow: 'payment',
+          } as const;
         });
 
-        return Astro.redirect(`/auth/payment?userId=${user.id}`);
+        if (createResult.flow === 'super_admin') {
+          const sessionToken = await createSession(createResult.userId);
+          const sessionCookie = createSessionCookie(sessionToken);
+
+          return new Response(null, {
+            status: 302,
+            headers: {
+              Location: '/admin/security',
+              'Set-Cookie': sessionCookie,
+            },
+          });
+        }
+
+        return buildPaymentRedirect(createResult.userId);
+      } catch (registrationError) {
+        error = registrationError instanceof Error
+          ? registrationError.message
+          : 'Kayıt sırasında bir hata oluştu.';
       }
     }
   }
 }
 ---
 
-<html lang="tr">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Kayıt Ol - CoachPro</title>
-  <link rel="stylesheet" href="/src/styles/global.css" />
-</head>
-<body class="min-h-screen relative bg-white" style="background-color: #ffffff;">
+<PublicLayout
+  title="Kayıt Ol - CoachPro"
+  bodyClass="min-h-screen relative bg-white"
+  bodyStyle="background-color: #ffffff;"
+>
   <!-- Subtle ShapeGrid Background -->
   <div class="fixed inset-0 z-0 bg-white pointer-events-none opacity-10">
     <ShapeGrid
@@ -127,7 +226,6 @@ if (Astro.request.method === 'POST') {
         <span class="text-xl font-bold text-gray-900">CoachPro</span>
       </a>
       <div class="flex items-center gap-4">
-        <a href="/auth/login" class="text-sm font-medium text-gray-600 hover:text-gray-900 transition-colors">Giriş Yap</a>
         <a href="/auth/login" class="btn-primary">Giriş Yap</a>
       </div>
     </div>
@@ -329,5 +427,4 @@ if (Astro.request.method === 'POST') {
       });
     });
   </script>
-</body>
-</html>
+</PublicLayout>

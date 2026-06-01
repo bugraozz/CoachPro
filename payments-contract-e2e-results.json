@@ -1,0 +1,20 @@
+[
+  {
+    "name": "payment blocked when coach payout status inactive",
+    "pass": false,
+    "status": 429,
+    "bodySnippet": "{\"error\":\"Cok fazla istek gonderildi. Lutfen tekrar deneyin.\"}"
+  },
+  {
+    "name": "payment success flow - checkout create",
+    "pass": false,
+    "status": 429,
+    "bodySnippet": "{\"error\":\"Cok fazla istek gonderildi. Lutfen tekrar deneyin.\"}"
+  },
+  {
+    "name": "payment fail flow - checkout create",
+    "pass": false,
+    "status": 429,
+    "bodySnippet": "{\"error\":\"Cok fazla istek gonderildi. Lutfen tekrar deneyin.\"}"
+  }
+]

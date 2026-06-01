@@ -16,8 +16,8 @@ export const POST: APIRoute = async ({ request }) => {
       return new Response(JSON.stringify({ error: 'Tüm alanlar zorunludur' }), { status: 400 });
     }
 
-    if (newPassword.length < 6) {
-      return new Response(JSON.stringify({ error: 'Yeni şifre en az 6 karakter olmalıdır' }), { status: 400 });
+    if (newPassword.length < 12) {
+      return new Response(JSON.stringify({ error: 'Yeni şifre en az 12 karakter olmalıdır' }), { status: 400 });
     }
 
     if (newPassword !== confirmPassword) {

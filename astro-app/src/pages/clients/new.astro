@@ -3,6 +3,13 @@ import MainLayout from '../../layouts/MainLayout.astro';
 import { getUserFromRequest, isCoach } from '../../lib/auth';
 
 const currentUser = await getUserFromRequest(Astro.request);
+if (!currentUser) {
+  return Astro.redirect('/auth/login');
+}
+
+if (!isCoach(currentUser)) {
+  return Astro.redirect('/dashboard');
+}
 
 if (Astro.request.method === 'POST') {
   const { default: prisma } = await import('../../lib/prisma');
@@ -19,7 +26,7 @@ if (Astro.request.method === 'POST') {
   const healthNotes = formData.get('healthNotes') as string;
   const fallbackEmail = `client-${Date.now()}-${Math.floor(Math.random() * 100000)}@local.invalid`;
   const resolvedEmail = (email || '').trim() || fallbackEmail;
-  const coachId = currentUser && isCoach(currentUser) ? currentUser.id : null;
+  const coachId = currentUser.id;
 
   const client = await prisma.user.create({
     data: {
@@ -140,7 +147,7 @@ if (Astro.request.method === 'POST') {
 
           <div class="space-y-2">
             <label class="label" for="healthNotes">Sağlık Notları</label>
-            <textarea id="healthNotes" name="healthNotes" class="input-field min-h-[120px] resize-y" placeholder="Sakatlık, alerji, kronik hastalık vb. bilgiler..."></textarea>
+            <textarea id="healthNotes" name="healthNotes" class="input-field min-h-30 resize-y" placeholder="Sakatlık, alerji, kronik hastalık vb. bilgiler..."></textarea>
             <p class="text-xs text-text-muted">Müşterinin sağlık durumu hakkında önemli notlar</p>
           </div>
         </div>

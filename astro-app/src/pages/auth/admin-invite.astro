@@ -1,0 +1,157 @@
+---
+import { acceptAdminInvite, getAdminInviteByToken } from '../../lib/admin-invites';
+import { getUserFromRequest, isBackofficeUser } from '../../lib/auth';
+import prisma from '../../lib/prisma';
+import PublicLayout from '../../layouts/PublicLayout.astro';
+
+const user = await getUserFromRequest(Astro.request);
+if (!user) {
+  return Astro.redirect('/auth/login');
+}
+
+const prismaClient = prisma as any;
+
+const token = String(Astro.url.searchParams.get('token') || '').trim();
+let infoMessage = '';
+let errorMessage = '';
+
+function getRequestIp(request: Request): string {
+  const forwardedFor = request.headers.get('x-forwarded-for');
+  if (forwardedFor) {
+    const firstIp = forwardedFor.split(',')[0]?.trim();
+    if (firstIp) {
+      return firstIp;
+    }
+  }
+
+  const realIp = request.headers.get('x-real-ip');
+  if (realIp) {
+    return realIp;
+  }
+
+  return 'unknown';
+}
+
+const invite = token ? await getAdminInviteByToken(token) : null;
+const inviteEmail = String(invite?.email || '').trim().toLowerCase();
+const userEmail = String(user.email || '').trim().toLowerCase();
+const inviteExpired = invite?.expiresAt ? new Date(invite.expiresAt) <= new Date() : false;
+const inviteRevoked = Boolean(invite?.revokedAt);
+const inviteAccepted = Boolean(invite?.acceptedAt);
+const inviteEmailMismatch = Boolean(invite && inviteEmail && inviteEmail !== userEmail);
+
+const canAccept = Boolean(
+  token &&
+  invite &&
+  !inviteExpired &&
+  !inviteRevoked &&
+  !inviteAccepted &&
+  !inviteEmailMismatch,
+);
+
+if (Astro.request.method === 'POST') {
+  const formData = await Astro.request.formData();
+  const action = String(formData.get('action') || '').trim();
+
+  try {
+    if (action !== 'accept_admin_invite') {
+      throw new Error('Gecersiz istek.');
+    }
+
+    if (!canAccept) {
+      throw new Error('Bu davet kabul edilmeye uygun degil.');
+    }
+
+    const accepted = await acceptAdminInvite({
+      token,
+      userId: user.id,
+      userEmail,
+      acceptedFromIp: getRequestIp(Astro.request),
+      acceptedUserAgent: Astro.request.headers.get('user-agent') || null,
+    });
+
+    await prismaClient.adminActionAudit.create({
+      data: {
+        action: 'accept_admin_invite',
+        adminUserId: user.id,
+        adminEmail: user.email || null,
+        targetUserId: user.id,
+        targetEmail: user.email || null,
+        metadata: {
+          acceptedRole: accepted.role,
+          requestPath: Astro.url.pathname,
+          source: 'admin_invite_page',
+        },
+      },
+    });
+
+    return Astro.redirect('/admin?ok=admin-invite-accepted');
+  } catch (postError) {
+    errorMessage = postError instanceof Error ? postError.message : 'Davet kabul edilemedi.';
+  }
+}
+
+if (!token) {
+  errorMessage = 'Davet tokeni bulunamadi.';
+} else if (!invite) {
+  errorMessage = 'Davet bulunamadi veya gecersiz.';
+} else if (inviteRevoked) {
+  errorMessage = 'Bu davet iptal edildi.';
+} else if (inviteAccepted) {
+  infoMessage = 'Bu davet daha once kullanilmis.';
+} else if (inviteExpired) {
+  errorMessage = 'Bu davetin suresi doldu.';
+} else if (inviteEmailMismatch) {
+  errorMessage = 'Bu davet farkli bir e-posta adresine ait. Dogru hesapla giris yapin.';
+}
+
+const roleLabel = String(invite?.role || '').trim().toLowerCase() === 'super_admin'
+  ? 'Super Admin'
+  : 'Admin';
+---
+
+<PublicLayout
+  title="CoachPro - Admin Davet"
+  description="CoachPro admin davet kabul"
+  bodyClass="min-h-screen bg-bg-primary"
+>
+  <main class="max-w-2xl mx-auto px-6 py-16">
+    <section class="card">
+      <h1 class="text-2xl font-bold text-text-primary mb-3">Admin Daveti</h1>
+      <p class="text-sm text-text-secondary mb-6">Merhaba {user.name}, bu sayfa ile backoffice davetini guvenli sekilde kabul edebilirsin.</p>
+
+      {errorMessage && (
+        <div class="mb-4 p-4 rounded-lg bg-accent-red/10 border border-accent-red/20 text-accent-red text-sm">
+          {errorMessage}
+        </div>
+      )}
+
+      {infoMessage && (
+        <div class="mb-4 p-4 rounded-lg bg-accent-green/10 border border-accent-green/20 text-accent-green text-sm">
+          {infoMessage}
+        </div>
+      )}
+
+      {invite && (
+        <div class="mb-6 p-4 rounded-xl border border-border-default bg-bg-tertiary/20 text-sm space-y-2">
+          <p><span class="text-text-muted">Davetli e-posta:</span> <span class="font-medium text-text-primary">{invite.email}</span></p>
+          <p><span class="text-text-muted">Verilecek rol:</span> <span class="font-medium text-text-primary">{roleLabel}</span></p>
+          <p><span class="text-text-muted">Olusturma:</span> <span class="text-text-primary">{new Date(invite.createdAt).toLocaleString('tr-TR')}</span></p>
+          <p><span class="text-text-muted">Bitis:</span> <span class="text-text-primary">{new Date(invite.expiresAt).toLocaleString('tr-TR')}</span></p>
+        </div>
+      )}
+
+      {canAccept ? (
+        <form method="POST" class="space-y-4">
+          <input type="hidden" name="action" value="accept_admin_invite" />
+          <button type="submit" class="btn-primary">Daveti Kabul Et ve Backoffice Yetkisini Aktiflestir</button>
+        </form>
+      ) : (
+        <div class="flex flex-wrap gap-3">
+          <a href={isBackofficeUser(user) ? '/admin' : '/dashboard'} class="btn-secondary">Panele Don</a>
+          <a href="/auth/logout" class="btn-secondary">Farkli Hesapla Giris Yap</a>
+        </div>
+      )}
+    </section>
+  </main>
+</PublicLayout>

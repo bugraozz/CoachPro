@@ -501,18 +501,18 @@ const marketplaceActivationQueue: MarketplaceActivationItem[] = (Object.values(
 
 <MainLayout title="Ayarlar" activePage="settings">
   <!-- Header -->
-  <header class="px-6 lg:px-8 py-5 border-b border-border-default bg-bg-secondary/80 backdrop-blur-xl sticky top-0 z-50">
+  <header class="section-header">
     <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-      <div>
-        <h1 class="text-2xl font-bold text-text-primary">Ayarlar</h1>
-        <p class="text-sm text-text-secondary mt-1">Hesap ve profil ayarlarınızı yönetin</p>
+      <div class="animate-in">
+        <h1>Ayarlar</h1>
+        <p>Hesap ve profil ayarlarınızı yönetin</p>
       </div>
     </div>
   </header>
 
-  <div class="p-6 lg:p-8">
+  <div class="page-content">
     <!-- Tab Navigation -->
-    <div class="flex flex-wrap gap-1 p-1 rounded-xl bg-bg-secondary border border-border-default mb-8 max-w-2xl">
+    <div class="flex flex-wrap gap-1 p-1 rounded-xl bg-bg-secondary border border-border-default mb-8 max-w-5xl mx-auto">
       <button data-tab="profile" class="tab-btn active flex-1 py-2.5 px-4 rounded-lg text-sm font-medium transition-all">Profil</button>
       <button data-tab="security" class="tab-btn flex-1 py-2.5 px-4 rounded-lg text-sm font-medium transition-all">Güvenlik</button>
       <button data-tab="account" class="tab-btn flex-1 py-2.5 px-4 rounded-lg text-sm font-medium transition-all">Hesap</button>
@@ -521,7 +521,8 @@ const marketplaceActivationQueue: MarketplaceActivationItem[] = (Object.values(
 
     <!-- Profile Tab -->
     <div id="tab-profile" class="tab-content">
-      <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+      <div class="max-w-5xl mx-auto">
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <!-- Profile Card -->
         <div class="lg:col-span-1">
           <div class="card text-center">
@@ -636,11 +637,12 @@ const marketplaceActivationQueue: MarketplaceActivationItem[] = (Object.values(
           </div>
         </div>
       </div>
+     </div>
     </div>
 
     <!-- Security Tab -->
     <div id="tab-security" class="tab-content hidden">
-      <div class="max-w-2xl">
+      <div class="max-w-5xl mx-auto">
         <div class="card">
           <h3 class="text-lg font-semibold text-text-primary mb-1">Şifre Değiştir</h3>
           <p class="text-sm text-text-muted mb-6">Hesap güvenliğiniz için güçlü bir şifre kullanın</p>
@@ -712,7 +714,7 @@ const marketplaceActivationQueue: MarketplaceActivationItem[] = (Object.values(
 
     <!-- Account Tab -->
     <div id="tab-account" class="tab-content hidden">
-      <div class="max-w-2xl space-y-6">
+      <div class="max-w-5xl mx-auto space-y-6">
         <div class="card">
           <h3 class="text-lg font-semibold text-text-primary mb-1">Hesap Bilgileri</h3>
           <p class="text-sm text-text-muted mb-6">Hesabınızla ilgili genel bilgiler</p>
@@ -893,7 +895,7 @@ const marketplaceActivationQueue: MarketplaceActivationItem[] = (Object.values(
         {userIsCoach && (
           <div class="card">
             <h3 class="text-lg font-semibold text-text-primary mb-1">Referans Indirimi</h3>
-            <p class="text-sm text-text-muted mb-6">Referans kodunuzla gelen ogrencilerin paket odemesinde sabit tutar indirimi uygulayin.</p>
+            <p class="text-sm text-text-muted mb-6">Referans kodunuzla gelen ogrencilerin paket odemesinde yüzde (%) indirimi uygulayin.</p>
 
             {discountSaved && (
               <div class="mb-5 p-4 rounded-lg bg-accent-green/10 border border-accent-green/20 text-accent-green text-sm">
@@ -912,7 +914,7 @@ const marketplaceActivationQueue: MarketplaceActivationItem[] = (Object.values(
                 Mevcut durum:{' '}
                 <span class={`font-semibold ${coachReferralDiscount.enabled && coachReferralDiscount.amount > 0 ? 'text-accent-green' : 'text-text-primary'}`}>
                   {coachReferralDiscount.enabled && coachReferralDiscount.amount > 0
-                    ? `Aktif (-₺${coachReferralDiscount.amount})`
+                    ? `Aktif (-%${coachReferralDiscount.amount})`
                     : 'Pasif'}
                 </span>
               </p>
@@ -922,7 +924,7 @@ const marketplaceActivationQueue: MarketplaceActivationItem[] = (Object.values(
               <input type="hidden" name="action" value="save_referral_discount" />
 
               <div>
-                <label class="label block mb-2">Indirim Tutari (₺)</label>
+                <label class="label block mb-2">Indirim Oranı (%)</label>
                 <input
                   type="number"
                   name="amount"

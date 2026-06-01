@@ -2,7 +2,19 @@ import type { APIRoute } from 'astro';
 import prisma from '../../../lib/prisma';
 import { getUserFromRequest, isCoach } from '../../../lib/auth';
 import { writeFile, mkdir } from 'fs/promises';
-import { join } from 'path';
+import { extname, join } from 'path';
+
+const MAX_UPLOAD_SIZE = 50 * 1024 * 1024; // 50MB
+const ALLOWED_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.mp4', '.mov', '.avi']);
+const ALLOWED_MIME_TYPES = new Set([
+  'image/jpeg',
+  'image/png',
+  'image/gif',
+  'image/webp',
+  'video/mp4',
+  'video/quicktime',
+  'video/x-msvideo',
+]);
 
 export const POST: APIRoute = async ({ request }) => {
   const user = await getUserFromRequest(request);
@@ -17,6 +29,16 @@ export const POST: APIRoute = async ({ request }) => {
 
   if (!file) {
     return new Response(JSON.stringify({ error: 'File is required' }), { status: 400 });
+  }
+
+  if (file.size <= 0 || file.size > MAX_UPLOAD_SIZE) {
+    return new Response(JSON.stringify({ error: 'File size must be between 1 byte and 50MB' }), { status: 400 });
+  }
+
+  const extension = extname(file.name || '').toLowerCase();
+  const mimeType = String(file.type || '').toLowerCase();
+  if (!ALLOWED_EXTENSIONS.has(extension) && !ALLOWED_MIME_TYPES.has(mimeType)) {
+    return new Response(JSON.stringify({ error: 'Supported formats: JPG, PNG, WEBP, MP4, MOV, AVI' }), { status: 400 });
   }
 
   // Determine target userId for analysis
@@ -39,7 +61,7 @@ export const POST: APIRoute = async ({ request }) => {
 
   // Save file
   const timestamp = Date.now();
-  const ext = file.name.split('.').pop() || 'jpg';
+  const ext = extension.slice(1) || 'jpg';
   const filename = `analysis_${timestamp}.${ext}`;
   const filepath = join(uploadDir, filename);
   const buffer = Buffer.from(await file.arrayBuffer());

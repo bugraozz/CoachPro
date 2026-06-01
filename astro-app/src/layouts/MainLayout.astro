@@ -1,4 +1,4 @@
-﻿---
+---
 import '../styles/global.css';
 import { getUserFromRequest, isBackofficeUser, isCoach, isStudent } from '../lib/auth';
 
@@ -14,14 +14,6 @@ const userIsCoach = user ? isCoach(user) : false;
 const userIsStudent = user ? isStudent(user) : false;
 const userIsBackoffice = user ? isBackofficeUser(user) : false;
 const showAdminShell = userIsBackoffice;
-
-const navItemBaseClass = 'flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all duration-200 relative group';
-const navItemInactiveClass = 'text-text-secondary hover:bg-bg-tertiary hover:text-text-primary';
-const navItemActiveClass = 'bg-accent-primary/10 text-accent-primary';
-
-function navItemClass(pageKey: string): string {
-  return `${navItemBaseClass} ${activePage === pageKey ? navItemActiveClass : navItemInactiveClass}`;
-}
 
 const shellLabel = showAdminShell
   ? 'Admin'
@@ -39,7 +31,7 @@ const shellLabel = showAdminShell
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="description" content="CoachPro - Kişisel antrenör müşteri takip ve vücut analizi platformu" />
   <title>{title} | CoachPro</title>
-  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>ğŸ‹ï¸</text></svg>" />
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏋️</text></svg>" />
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.8/dist/chart.umd.min.js" is:inline></script>
 </head>
 <body class="bg-bg-primary text-text-primary antialiased font-sans flex min-h-screen relative overflow-x-hidden">
@@ -47,98 +39,145 @@ const shellLabel = showAdminShell
   {/* Sidebar */}
   <aside
     id="sidebar"
-    class="w-70 bg-bg-secondary/95 backdrop-blur-xl border-r border-border-default flex flex-col fixed inset-y-0 left-0 z-100 transition-transform duration-300 ease-out md:translate-x-0 -translate-x-full"
+    class="sidebar-premium w-[17rem] border-r border-border-default flex flex-col fixed inset-y-0 left-0 z-100 transition-transform duration-300 ease-out md:translate-x-0 -translate-x-full"
   >
-    <div class="px-6 py-6 border-b border-border-default">
+    {/* Logo */}
+    <div class="px-5 py-5 border-b border-border-default">
       <a href="/" class="flex items-center gap-3 group">
-        <div class="w-11 h-11 rounded-xl bg-linear-to-br from-accent-primary to-accent-purple flex items-center justify-center text-lg font-bold text-white shadow-lg group-hover:shadow-glow transition-shadow duration-300">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-[#CD0000] to-[#8B0000] flex items-center justify-center text-sm font-bold text-white shadow-lg shadow-accent-primary/15 group-hover:shadow-accent-primary/25 transition-shadow duration-300">
           CP
         </div>
         <div class="min-w-0">
-          <p class="text-xl font-bold text-text-primary leading-tight tracking-tight">CoachPro</p>
-          <p class="text-[11px] uppercase tracking-wider text-text-muted mt-0.5">{shellLabel}</p>
+          <p class="text-base font-bold text-text-primary leading-tight tracking-tight">CoachPro</p>
+          <p class="text-[10px] uppercase tracking-[0.15em] text-text-muted mt-0.5 font-semibold">{shellLabel}</p>
         </div>
       </a>
     </div>
 
-    <nav class="flex-1 overflow-y-auto px-4 py-5">
+    {/* Navigation */}
+    <nav class="flex-1 overflow-y-auto px-3 py-4">
       {showAdminShell ? (
-        <div class="space-y-8">
-          <div class="space-y-1">
-            <p class="px-3 mb-3 text-[11px] font-semibold uppercase tracking-widest text-text-muted">Site Yonetimi</p>
-            <a href="/admin" class={navItemClass('admin')} data-sidebar-link>
-              {activePage === 'admin' && <div class="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-8 bg-accent-primary rounded-r-full"></div>}
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5 shrink-0"><path d="M3 13h8V3H3z"/><path d="M13 21h8v-8h-8z"/><path d="M13 3h8v6h-8z"/><path d="M3 21h8v-6H3z"/></svg>
-              <span>Admin Dashboard</span>
+        <div class="space-y-6">
+          <div class="space-y-0.5">
+            <p class="px-3 mb-2.5 text-[10px] font-bold uppercase tracking-[0.15em] text-text-muted">Site Yonetimi</p>
+            <a href="/admin" class={`sidebar-nav-item ${activePage === 'admin' ? 'active' : ''}`} data-sidebar-link>
+              <div class="nav-icon-box">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="M3 13h8V3H3z"/><path d="M13 21h8v-8h-8z"/><path d="M13 3h8v6h-8z"/><path d="M3 21h8v-6H3z"/></svg>
+              </div>
+              <span>Dashboard</span>
+            </a>
+
+            <a href="/admin/pricing" class={`sidebar-nav-item ${activePage === 'admin-pricing' ? 'active' : ''}`} data-sidebar-link>
+              <div class="nav-icon-box">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="M12 1v22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+              </div>
+              <span>Fiyatlandirma</span>
+            </a>
+
+            <a href="/admin/users" class={`sidebar-nav-item ${activePage === 'admin-users' ? 'active' : ''}`} data-sidebar-link>
+              <div class="nav-icon-box">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+              </div>
+              <span>Kullanicilar</span>
+            </a>
+
+            <a href="/admin/coaches" class={`sidebar-nav-item ${activePage === 'admin-coaches' ? 'active' : ''}`} data-sidebar-link>
+              <div class="nav-icon-box">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="M18 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="10" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+              </div>
+              <span>Egitmenler</span>
+            </a>
+
+            <a href="/admin/payments" class={`sidebar-nav-item ${activePage === 'admin-payments' ? 'active' : ''}`} data-sidebar-link>
+              <div class="nav-icon-box">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg>
+              </div>
+              <span>Odemeler</span>
+            </a>
+
+            <a href="/admin/security" class={`sidebar-nav-item ${activePage === 'admin-security' ? 'active' : ''}`} data-sidebar-link>
+              <div class="nav-icon-box">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="M12 2 4 5v6c0 5.55 3.84 10.74 8 12 4.16-1.26 8-6.45 8-12V5Z"/><path d="M9 12l2 2 4-4"/></svg>
+              </div>
+              <span>Guvenlik ve Yetki</span>
             </a>
           </div>
 
-          <div class="space-y-1">
-            <p class="px-3 mb-3 text-[11px] font-semibold uppercase tracking-widest text-text-muted">Hesap</p>
-            <a href="/settings" class={navItemClass('settings')} data-sidebar-link>
-              {activePage === 'settings' && <div class="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-8 bg-accent-primary rounded-r-full"></div>}
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5 shrink-0"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+          <div class="space-y-0.5">
+            <p class="px-3 mb-2.5 text-[10px] font-bold uppercase tracking-[0.15em] text-text-muted">Hesap</p>
+            <a href="/settings" class={`sidebar-nav-item ${activePage === 'settings' ? 'active' : ''}`} data-sidebar-link>
+              <div class="nav-icon-box">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+              </div>
               <span>Ayarlar</span>
             </a>
           </div>
         </div>
       ) : (
-        <div class="space-y-8">
-          <div class="space-y-1">
-            <p class="px-3 mb-3 text-[11px] font-semibold uppercase tracking-widest text-text-muted">Ana Menu</p>
-            <a href="/dashboard" class={navItemClass('dashboard')} data-sidebar-link>
-              {activePage === 'dashboard' && <div class="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-8 bg-accent-primary rounded-r-full"></div>}
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5 shrink-0"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>
+        <div class="space-y-6">
+          <div class="space-y-0.5">
+            <p class="px-3 mb-2.5 text-[10px] font-bold uppercase tracking-[0.15em] text-text-muted">Ana Menu</p>
+            <a href="/dashboard" class={`sidebar-nav-item ${activePage === 'dashboard' ? 'active' : ''}`} data-sidebar-link>
+              <div class="nav-icon-box">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>
+              </div>
               <span>Dashboard</span>
             </a>
 
             {userIsCoach && (
-              <a href="/students" class={navItemClass('students')} data-sidebar-link>
-                {activePage === 'students' && <div class="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-8 bg-accent-primary rounded-r-full"></div>}
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5 shrink-0"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+              <a href="/students" class={`sidebar-nav-item ${activePage === 'students' ? 'active' : ''}`} data-sidebar-link>
+                <div class="nav-icon-box">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                </div>
                 <span>Ogrencilerim</span>
               </a>
             )}
 
-            <a href="/messages" class={navItemClass('messages')} data-sidebar-link>
-              {activePage === 'messages' && <div class="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-8 bg-accent-primary rounded-r-full"></div>}
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5 shrink-0"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>
+            <a href="/messages" class={`sidebar-nav-item ${activePage === 'messages' ? 'active' : ''}`} data-sidebar-link>
+              <div class="nav-icon-box">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>
+              </div>
               <span>Mesajlar</span>
             </a>
           </div>
 
-          <div class="space-y-1">
-            <p class="px-3 mb-3 text-[11px] font-semibold uppercase tracking-widest text-text-muted">Araclar</p>
-            <a href="/analysis" class={navItemClass('analysis')} data-sidebar-link>
-              {activePage === 'analysis' && <div class="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-8 bg-accent-primary rounded-r-full"></div>}
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5 shrink-0"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+          <div class="space-y-0.5">
+            <p class="px-3 mb-2.5 text-[10px] font-bold uppercase tracking-[0.15em] text-text-muted">Araclar</p>
+            <a href="/analysis" class={`sidebar-nav-item ${activePage === 'analysis' ? 'active' : ''}`} data-sidebar-link>
+              <div class="nav-icon-box">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+              </div>
               <span>Vucut Analizi</span>
             </a>
 
-            <a href="/programs" class={navItemClass('programs')} data-sidebar-link>
-              {activePage === 'programs' && <div class="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-8 bg-accent-primary rounded-r-full"></div>}
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5 shrink-0"><path d="m6.5 6.5 11 11"/><path d="m21 21-1-1"/><path d="m3 3 1 1"/><path d="m18 22 4-4"/><path d="m2 6 4-4"/><path d="m3 10 7-7"/><path d="m14 21 7-7"/></svg>
+            <a href="/programs" class={`sidebar-nav-item ${activePage === 'programs' ? 'active' : ''}`} data-sidebar-link>
+              <div class="nav-icon-box">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="m6.5 6.5 11 11"/><path d="m21 21-1-1"/><path d="m3 3 1 1"/><path d="m18 22 4-4"/><path d="m2 6 4-4"/><path d="m3 10 7-7"/><path d="m14 21 7-7"/></svg>
+              </div>
               <span>Programlar</span>
             </a>
 
-            <a href="/diet" class={navItemClass('diet')} data-sidebar-link>
-              {activePage === 'diet' && <div class="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-8 bg-accent-primary rounded-r-full"></div>}
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5 shrink-0"><path d="M12 21a9 9 0 0 0 9-9H3a9 9 0 0 0 9 9Z"/><path d="M7 21h10"/><path d="M19.5 12 22 6"/><path d="M16.25 3c.27.1.8.53.75 1.36-.06.83-.93 1.2-1 2.02-.05.78.34 1.24.73 1.62"/><path d="M11.25 3c.27.1.8.53.75 1.36-.06.83-.93 1.2-1 2.02-.05.78.34 1.24.73 1.62"/><path d="M6.25 3c.27.1.8.53.75 1.36-.06.83-.93 1.2-1 2.02-.05.78.34 1.24.73 1.62"/></svg>
+            <a href="/diet" class={`sidebar-nav-item ${activePage === 'diet' ? 'active' : ''}`} data-sidebar-link>
+              <div class="nav-icon-box">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="M12 21a9 9 0 0 0 9-9H3a9 9 0 0 0 9 9Z"/><path d="M7 21h10"/><path d="M19.5 12 22 6"/><path d="M16.25 3c.27.1.8.53.75 1.36-.06.83-.93 1.2-1 2.02-.05.78.34 1.24.73 1.62"/><path d="M11.25 3c.27.1.8.53.75 1.36-.06.83-.93 1.2-1 2.02-.05.78.34 1.24.73 1.62"/><path d="M6.25 3c.27.1.8.53.75 1.36-.06.83-.93 1.2-1 2.02-.05.78.34 1.24.73 1.62"/></svg>
+              </div>
               <span>Diyet Planlari</span>
             </a>
 
-            <a href="/progress" class={navItemClass('progress')} data-sidebar-link>
-              {activePage === 'progress' && <div class="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-8 bg-accent-primary rounded-r-full"></div>}
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5 shrink-0"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
+            <a href="/progress" class={`sidebar-nav-item ${activePage === 'progress' ? 'active' : ''}`} data-sidebar-link>
+              <div class="nav-icon-box">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
+              </div>
               <span>Gelisim Takibi</span>
             </a>
           </div>
 
-          <div class="space-y-1">
-            <p class="px-3 mb-3 text-[11px] font-semibold uppercase tracking-widest text-text-muted">Hesap</p>
-            <a href="/settings" class={navItemClass('settings')} data-sidebar-link>
-              {activePage === 'settings' && <div class="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-8 bg-accent-primary rounded-r-full"></div>}
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-5 h-5 shrink-0"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+          <div class="space-y-0.5">
+            <p class="px-3 mb-2.5 text-[10px] font-bold uppercase tracking-[0.15em] text-text-muted">Hesap</p>
+            <a href="/settings" class={`sidebar-nav-item ${activePage === 'settings' ? 'active' : ''}`} data-sidebar-link>
+              <div class="nav-icon-box">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-4 h-4"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>
+              </div>
               <span>Ayarlar</span>
             </a>
           </div>
@@ -146,23 +185,24 @@ const shellLabel = showAdminShell
       )}
     </nav>
 
-    <div class="px-4 py-4 border-t border-border-default mt-auto">
+    {/* User Profile */}
+    <div class="px-3 py-4 border-t border-border-default mt-auto">
       {user ? (
-        <div class="space-y-3">
-          <div class="flex items-center gap-3 px-3 py-3 rounded-xl bg-bg-tertiary/50">
-            <div class="w-10 h-10 rounded-full bg-linear-to-br from-accent-purple to-accent-primary flex items-center justify-center text-sm font-bold text-white shrink-0 shadow-md">
+        <div class="space-y-2.5">
+          <div class="user-card">
+            <div class="w-9 h-9 rounded-full bg-gradient-to-br from-accent-purple to-accent-primary flex items-center justify-center text-xs font-bold text-white shrink-0 shadow-sm">
               {user.name.charAt(0).toUpperCase()}
             </div>
             <div class="flex flex-col min-w-0 flex-1">
               <div class="text-sm font-semibold text-text-primary truncate">{user.name}</div>
-              <div class="text-xs text-text-muted truncate flex items-center gap-1.5">
-                <span class={`w-2 h-2 rounded-full ${userIsBackoffice ? 'bg-accent-orange' : userIsCoach ? 'bg-accent-primary' : 'bg-accent-cyan'}`}></span>
+              <div class="text-[11px] text-text-muted truncate flex items-center gap-1.5">
+                <span class={`w-1.5 h-1.5 rounded-full ${userIsBackoffice ? 'bg-accent-orange' : userIsCoach ? 'bg-accent-primary' : 'bg-accent-cyan'}`}></span>
                 {userIsBackoffice ? 'Admin' : userIsCoach ? 'Egitmen' : 'Ogrenci'}
               </div>
             </div>
           </div>
-          <a href="/auth/logout" class="flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-text-secondary hover:text-accent-red hover:bg-accent-red/10 transition-all" data-sidebar-link>
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+          <a href="/auth/logout" class="logout-btn" data-sidebar-link>
+            <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
             Cikis Yap
           </a>
         </div>
@@ -176,7 +216,7 @@ const shellLabel = showAdminShell
   </aside>
 
   {/* Main Content */}
-  <main class="flex-1 md:ml-70 min-h-screen w-full">
+  <main class="flex-1 md:ml-[17rem] min-h-screen w-full">
     <slot />
   </main>
 
@@ -186,8 +226,7 @@ const shellLabel = showAdminShell
   {/* Mobile Menu Button */}
   <button 
     id="mobileMenuBtn" 
-    class="md:hidden fixed bottom-6 left-6 w-14 h-14 bg-accent-primary text-white rounded-2xl shadow-xl shadow-accent-primary/25 flex items-center justify-center z-110 hover:bg-accent-primary-hover transition-colors"
-    onclick="document.getElementById('sidebar').classList.toggle('-translate-x-full')"
+    class="md:hidden fixed bottom-6 left-6 w-14 h-14 bg-accent-primary text-white rounded-2xl shadow-xl shadow-accent-primary/25 flex items-center justify-center z-[110] hover:bg-accent-primary-hover transition-colors"
   >
     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="12" x2="20" y2="12"></line><line x1="4" y1="6" x2="20" y2="6"></line><line x1="4" y1="18" x2="20" y2="18"></line></svg>
   </button>
@@ -196,39 +235,44 @@ const shellLabel = showAdminShell
   <div 
     id="mobileOverlay"
     class="md:hidden fixed inset-0 bg-black/60 backdrop-blur-sm z-90 opacity-0 pointer-events-none transition-opacity duration-300"
-    onclick="document.getElementById('sidebar').classList.add('-translate-x-full'); this.classList.add('opacity-0', 'pointer-events-none');"
   ></div>
 
   <script is:inline>
-    const sidebar = document.getElementById('sidebar');
-    const overlay = document.getElementById('mobileOverlay');
-    const mobileBtn = document.getElementById('mobileMenuBtn');
-    const sidebarLinks = document.querySelectorAll('[data-sidebar-link]');
+    function initSidebar() {
+      const sidebar = document.getElementById('sidebar');
+      const overlay = document.getElementById('mobileOverlay');
+      const mobileBtn = document.getElementById('mobileMenuBtn');
+      const sidebarLinks = document.querySelectorAll('[data-sidebar-link]');
 
-    function closeSidebar() {
-      sidebar?.classList.add('-translate-x-full');
-      overlay?.classList.add('opacity-0', 'pointer-events-none');
-    }
-
-    mobileBtn?.addEventListener('click', () => {
-      const isOpen = !sidebar?.classList.contains('-translate-x-full');
-      if (isOpen) {
+      function closeSidebar() {
+        sidebar?.classList.add('-translate-x-full');
         overlay?.classList.add('opacity-0', 'pointer-events-none');
-      } else {
-        overlay?.classList.remove('opacity-0', 'pointer-events-none');
       }
-    });
 
-    sidebarLinks.forEach((link) => {
-      link.addEventListener('click', () => {
-        if (window.innerWidth < 768) {
-          closeSidebar();
+      mobileBtn?.addEventListener('click', () => {
+        sidebar?.classList.toggle('-translate-x-full');
+        const isOpen = !sidebar?.classList.contains('-translate-x-full');
+        
+        if (isOpen) {
+          overlay?.classList.remove('opacity-0', 'pointer-events-none');
+        } else {
+          overlay?.classList.add('opacity-0', 'pointer-events-none');
         }
       });
-    });
+
+      overlay?.addEventListener('click', closeSidebar);
+
+      sidebarLinks.forEach((link) => {
+        link.addEventListener('click', () => {
+          if (window.innerWidth < 768) {
+            closeSidebar();
+          }
+        });
+      });
+    }
+
+    // Run on first load
+    initSidebar();
   </script>
 </body>
 </html>
-
-
-

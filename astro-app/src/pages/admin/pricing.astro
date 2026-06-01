@@ -1,0 +1,202 @@
+---
+import MainLayout from '../../layouts/MainLayout.astro';
+import AdminPricingPanel from '../../components/dashboard/AdminPricingPanel';
+import { canManageAdminSecurity, getUserFromRequest, isBackofficeUser, isSuperAdmin } from '../../lib/auth';
+import prisma from '../../lib/prisma';
+import {
+  getCoachSubscriptionPlanDiscounts,
+  getCoachSubscriptionPlans,
+  getGlobalCoachSubscriptionDiscount,
+  setCoachSubscriptionPlanDiscounts,
+  setCoachSubscriptionPlanPrices,
+  setGlobalCoachSubscriptionDiscount,
+} from '../../lib/pricing';
+
+const user = await getUserFromRequest(Astro.request);
+
+if (!user) {
+  return Astro.redirect('/auth/login');
+}
+
+if (!isBackofficeUser(user)) {
+  return Astro.redirect('/dashboard');
+}
+
+const adminUser = user;
+const canManagePricing = canManageAdminSecurity(adminUser);
+const prismaClient = prisma as any;
+
+const ok = String(Astro.url.searchParams.get('ok') || '').trim();
+const error = String(Astro.url.searchParams.get('error') || '').trim();
+
+function getRequestIp(request: Request): string {
+  const forwardedFor = request.headers.get('x-forwarded-for');
+  if (forwardedFor) {
+    const firstIp = forwardedFor.split(',')[0]?.trim();
+    if (firstIp) {
+      return firstIp;
+    }
+  }
+
+  const realIp = request.headers.get('x-real-ip');
+  if (realIp) {
+    return realIp;
+  }
+
+  return 'unknown';
+}
+
+async function writeAdminAuditLog(payload: {
+  action: string;
+  metadata?: Record<string, unknown>;
+}): Promise<void> {
+  try {
+    await prismaClient.adminActionAudit.create({
+      data: {
+        action: payload.action,
+        adminUserId: adminUser.id,
+        adminEmail: adminUser.email || null,
+        metadata: {
+          ...(payload.metadata || {}),
+          ip: getRequestIp(Astro.request),
+          userAgent: Astro.request.headers.get('user-agent') || null,
+          requestPath: Astro.url.pathname,
+        },
+      },
+    });
+  } catch (auditError) {
+    console.error('Admin pricing audit log write failed:', auditError);
+  }
+}
+
+if (Astro.request.method === 'POST') {
+  const formData = await Astro.request.formData();
+  const action = String(formData.get('action') || '').trim();
+
+  try {
+    if (!canManagePricing) {
+      throw new Error('Bu islemleri sadece super admin yapabilir.');
+    }
+
+    if (action === 'save_subscription_plans') {
+      const monthlyPrice = Number.parseInt(String(formData.get('monthlyPrice') || '').trim(), 10);
+      const yearlyPrice = Number.parseInt(String(formData.get('yearlyPrice') || '').trim(), 10);
+
+      if (!Number.isFinite(monthlyPrice) || monthlyPrice <= 0) {
+        throw new Error('Aylik plan fiyati gecersiz.');
+      }
+
+      if (!Number.isFinite(yearlyPrice) || yearlyPrice <= 0) {
+        throw new Error('Yillik plan fiyati gecersiz.');
+      }
+
+      await setCoachSubscriptionPlanPrices({
+        monthlyPrice,
+        yearlyPrice,
+        updatedBy: adminUser.id,
+      });
+
+      await writeAdminAuditLog({
+        action,
+        metadata: {
+          monthlyPrice,
+          yearlyPrice,
+        },
+      });
+
+      return Astro.redirect('/admin/pricing?ok=subscription-plans-saved');
+    }
+
+    if (action === 'save_subscription_plan_discounts') {
+      const monthlyEnabled = formData.get('monthlyEnabled') === 'on';
+      const yearlyEnabled = formData.get('yearlyEnabled') === 'on';
+
+      const monthlyAmountRaw = Number.parseInt(String(formData.get('monthlyAmount') || '').trim(), 10);
+      const yearlyAmountRaw = Number.parseInt(String(formData.get('yearlyAmount') || '').trim(), 10);
+
+      const monthlyAmount = Number.isFinite(monthlyAmountRaw) ? Math.max(0, monthlyAmountRaw) : 0;
+      const yearlyAmount = Number.isFinite(yearlyAmountRaw) ? Math.max(0, yearlyAmountRaw) : 0;
+
+      await setCoachSubscriptionPlanDiscounts({
+        monthlyEnabled,
+        monthlyAmount,
+        yearlyEnabled,
+        yearlyAmount,
+        updatedBy: adminUser.id,
+      });
+
+      await writeAdminAuditLog({
+        action,
+        metadata: {
+          monthlyEnabled,
+          monthlyAmount,
+          yearlyEnabled,
+          yearlyAmount,
+        },
+      });
+
+      return Astro.redirect('/admin/pricing?ok=subscription-discounts-saved');
+    }
+
+    if (action === 'save_global_discount') {
+      const enabled = String(formData.get('enabled') || '').trim() === 'true';
+      const amountRaw = parseInt(String(formData.get('amount') || '0').trim(), 10);
+      const amount = Number.isNaN(amountRaw) ? -1 : amountRaw;
+
+      if (amount < 0) {
+        throw new Error('Indirim tutari gecersiz.');
+      }
+
+      const previousGlobalDiscount = await getGlobalCoachSubscriptionDiscount();
+
+      await setGlobalCoachSubscriptionDiscount({
+        enabled,
+        amount,
+        updatedBy: adminUser.id,
+      });
+
+      await writeAdminAuditLog({
+        action,
+        metadata: {
+          previousEnabled: previousGlobalDiscount.enabled,
+          previousAmount: previousGlobalDiscount.amount,
+          nextEnabled: enabled,
+          nextAmount: amount,
+        },
+      });
+
+      return Astro.redirect('/admin/pricing?ok=global-discount-saved');
+    }
+  } catch (postError) {
+    const message = postError instanceof Error ? postError.message : 'Islem tamamlanamadi.';
+    return Astro.redirect(`/admin/pricing?error=${encodeURIComponent(message)}`);
+  }
+
+  return Astro.redirect('/admin/pricing');
+}
+
+const [coachPlans, coachPlanDiscounts, globalCoachDiscount] = await Promise.all([
+  getCoachSubscriptionPlans(),
+  getCoachSubscriptionPlanDiscounts(),
+  getGlobalCoachSubscriptionDiscount(),
+]);
+
+const monthlyPlan = coachPlans.find((plan) => plan.id === 'monthly') || coachPlans[0];
+const yearlyPlan = coachPlans.find((plan) => plan.id === 'yearly') || coachPlans[coachPlans.length - 1];
+---
+<MainLayout title="Admin Fiyatlandirma" activePage="admin-pricing">
+  <AdminPricingPanel
+    client:load
+    ok={ok}
+    error={error}
+    isSuperAdmin={isSuperAdmin(adminUser)}
+    canManagePricing={canManagePricing}
+    monthlyPlanPrice={monthlyPlan?.price || 299}
+    monthlyPlanLabel={monthlyPlan?.label || 'Aylik Plan'}
+    yearlyPlanPrice={yearlyPlan?.price || 2990}
+    yearlyPlanLabel={yearlyPlan?.label || 'Yillik Plan'}
+    globalDiscount={{ enabled: globalCoachDiscount.enabled, amount: globalCoachDiscount.amount }}
+    monthlyPlanDiscount={{ enabled: coachPlanDiscounts.monthly.enabled, amount: coachPlanDiscounts.monthly.amount }}
+    yearlyPlanDiscount={{ enabled: coachPlanDiscounts.yearly.enabled, amount: coachPlanDiscounts.yearly.amount }}
+  />
+</MainLayout>

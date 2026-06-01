@@ -49,25 +49,23 @@ const activeDiet = dietPlans.find(d => d.active);
 ---
 
 <MainLayout title="Diyet Planları" activePage="diet">
-  <header class="px-6 lg:px-8 py-5 border-b border-border-default bg-bg-secondary/80 backdrop-blur-xl sticky top-0 z-50">
+  <header class="section-header">
     <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-      <div>
-        <h1 class="text-2xl font-bold text-text-primary">Diyet Planları</h1>
-        <p class="text-sm text-text-secondary mt-1">
-          {userIsCoach ? `${dietPlans.length} diyet planı oluşturulmuş` : 'Eğitmenin tarafından hazırlanan beslenme programı'}
-        </p>
+      <div class="animate-in">
+        <h1>Diyet Planları</h1>
+        <p>{userIsCoach ? `${dietPlans.length} diyet planı oluşturulmuş` : 'Eğitmenin tarafından hazırlanan beslenme programı'}</p>
       </div>
     </div>
   </header>
 
-  <div class="p-6 lg:p-8">
+  <div class="page-content">
     {userIsCoach ? (
       <!-- COACH VIEW -->
       <div>
         {dietPlans.length > 0 ? (
           <div class="space-y-6">
             {dietPlans.map(diet => (
-              <div class={`card ${diet.active ? 'border-accent-green/20' : ''}`}>
+              <div class={`card-accent ${diet.active ? '' : ''}`} style={`--accent-stripe: ${diet.active ? 'linear-gradient(90deg, #10b981, #34d399)' : 'linear-gradient(90deg, #94a3b8, #cbd5e1)'}`}>
                 <div class="flex items-center justify-between mb-4">
                   <div class="flex items-center gap-3">
                     <div class={`w-12 h-12 rounded-xl flex items-center justify-center ${diet.active ? 'bg-accent-cyan/10' : 'bg-bg-tertiary'}`}>
@@ -134,12 +132,12 @@ const activeDiet = dietPlans.find(d => d.active);
             ))}
           </div>
         ) : (
-          <div class="text-center py-16">
-            <div class="w-20 h-20 rounded-3xl bg-bg-tertiary flex items-center justify-center mx-auto mb-6">
-              <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="text-text-muted"><path d="M18 8h1a4 4 0 0 1 0 8h-1"/><path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z"/></svg>
+          <div class="empty-state animate-in">
+            <div class="empty-state-icon">
+              <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="text-text-muted"><path d="M18 8h1a4 4 0 0 1 0 8h-1"/><path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z"/></svg>
             </div>
-            <h3 class="text-xl font-bold text-text-primary mb-2">Henüz diyet planı oluşturulmamış</h3>
-            <p class="text-text-secondary mb-6 max-w-md mx-auto">Öğrenci detay sayfasından diyet planı oluşturabilirsiniz.</p>
+            <p class="empty-state-title">Henüz diyet planı oluşturulmamış</p>
+            <p class="empty-state-description">Öğrenci detay sayfasından diyet planı oluşturabilirsiniz.</p>
             {students.length > 0 && (
               <a href={`/students/${students[0].id}/diet/new`} class="btn-primary">İlk Diyet Planını Oluştur</a>
             )}
@@ -152,7 +150,7 @@ const activeDiet = dietPlans.find(d => d.active);
         {activeDiet ? (
           <div class="space-y-6">
             <!-- Macro Overview -->
-            <div class="card">
+            <div class="card-accent animate-in-1" style="--accent-stripe: linear-gradient(90deg, #10b981, #34d399)">
               <h2 class="text-lg font-semibold text-text-primary mb-6">{activeDiet.name}</h2>
               <div class="grid grid-cols-2 lg:grid-cols-5 gap-4">
                 <div class="text-center p-4 rounded-xl bg-accent-green/10 border border-accent-green/20">
@@ -181,7 +179,7 @@ const activeDiet = dietPlans.find(d => d.active);
             <!-- Meals -->
             <div class="space-y-4">
               {activeDiet.meals.map((meal: any) => (
-                <div class="card">
+                <div class="card animate-in-2">
                   <div class="flex items-center justify-between mb-4">
                     <h3 class="text-lg font-semibold text-text-primary flex items-center gap-3">
                       <span class="text-2xl">
@@ -198,26 +196,26 @@ const activeDiet = dietPlans.find(d => d.active);
 
                   {meal.foods.length > 0 ? (
                     <div class="overflow-x-auto">
-                      <table class="w-full">
+                      <table class="premium-table">
                         <thead>
-                          <tr class="border-b border-border-default">
-                            <th class="text-left py-3 px-4 text-xs font-semibold text-text-muted uppercase tracking-wider">Besin</th>
-                            <th class="text-center py-3 px-4 text-xs font-semibold text-text-muted uppercase tracking-wider">Miktar</th>
-                            <th class="text-center py-3 px-4 text-xs font-semibold text-text-muted uppercase tracking-wider">Kalori</th>
-                            <th class="text-center py-3 px-4 text-xs font-semibold text-text-muted uppercase tracking-wider">Protein</th>
-                            <th class="text-center py-3 px-4 text-xs font-semibold text-text-muted uppercase tracking-wider">Karb</th>
-                            <th class="text-center py-3 px-4 text-xs font-semibold text-text-muted uppercase tracking-wider">Yağ</th>
+                          <tr>
+                            <th>Besin</th>
+                            <th class="text-center">Miktar</th>
+                            <th class="text-center">Kalori</th>
+                            <th class="text-center">Protein</th>
+                            <th class="text-center">Karb</th>
+                            <th class="text-center">Yağ</th>
                           </tr>
                         </thead>
-                        <tbody class="divide-y divide-border-default">
+                        <tbody>
                           {meal.foods.map((food: any) => (
-                            <tr class="hover:bg-bg-tertiary transition-colors">
-                              <td class="py-3 px-4 font-medium text-text-primary">{food.name}</td>
-                              <td class="py-3 px-4 text-center text-text-secondary">{food.amount} {food.unit}</td>
-                              <td class="py-3 px-4 text-center font-semibold">{food.calories}</td>
-                              <td class="py-3 px-4 text-center text-accent-cyan font-semibold">{food.protein}g</td>
-                              <td class="py-3 px-4 text-center text-accent-orange font-semibold">{food.carbs}g</td>
-                              <td class="py-3 px-4 text-center text-accent-yellow font-semibold">{food.fat}g</td>
+                            <tr>
+                              <td class="font-medium text-text-primary">{food.name}</td>
+                              <td class="text-center text-text-secondary">{food.amount} {food.unit}</td>
+                              <td class="text-center font-semibold">{food.calories}</td>
+                              <td class="text-center text-accent-cyan font-semibold">{food.protein}g</td>
+                              <td class="text-center text-accent-orange font-semibold">{food.carbs}g</td>
+                              <td class="text-center font-semibold" style="color:#ca8a04">{food.fat}g</td>
                             </tr>
                           ))}
                         </tbody>
@@ -231,7 +229,7 @@ const activeDiet = dietPlans.find(d => d.active);
             </div>
 
             <!-- Water Tracker -->
-            <div class="card border-accent-cyan/20">
+            <div class="card-accent animate-in-3" style="--accent-stripe: linear-gradient(90deg, #06b6d4, #22d3ee)">
               <h3 class="text-lg font-semibold text-text-primary mb-4 flex items-center gap-2">
                 💧 Günlük Su Takibi
                 <span class="text-sm font-normal text-text-muted">({activeDiet.waterTarget}ml hedef)</span>
@@ -248,12 +246,12 @@ const activeDiet = dietPlans.find(d => d.active);
             </div>
           </div>
         ) : (
-          <div class="text-center py-16">
-            <div class="w-20 h-20 rounded-3xl bg-bg-tertiary flex items-center justify-center mx-auto mb-6">
-              <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="text-text-muted"><path d="M18 8h1a4 4 0 0 1 0 8h-1"/><path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z"/><line x1="6" y1="1" x2="6" y2="4"/><line x1="10" y1="1" x2="10" y2="4"/><line x1="14" y1="1" x2="14" y2="4"/></svg>
+          <div class="empty-state animate-in">
+            <div class="empty-state-icon">
+              <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="text-text-muted"><path d="M18 8h1a4 4 0 0 1 0 8h-1"/><path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z"/><line x1="6" y1="1" x2="6" y2="4"/><line x1="10" y1="1" x2="10" y2="4"/><line x1="14" y1="1" x2="14" y2="4"/></svg>
             </div>
-            <h3 class="text-xl font-bold text-text-primary mb-2">Henüz diyet planı yok</h3>
-            <p class="text-text-secondary mb-6 max-w-md mx-auto">Eğitmeniniz size bir diyet planı atadığında burada görüntülenecek.</p>
+            <p class="empty-state-title">Henüz diyet planı yok</p>
+            <p class="empty-state-description">Eğitmeniniz size bir diyet planı atadığında burada görüntülenecek.</p>
           </div>
         )}
       </div>

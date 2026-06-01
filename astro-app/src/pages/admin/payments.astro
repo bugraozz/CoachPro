@@ -1,0 +1,625 @@
+---
+import MainLayout from '../../layouts/MainLayout.astro';
+import AdminPaymentsPanel from '../../components/dashboard/AdminPaymentsPanel';
+import { getUserFromRequest, isBackofficeUser, isSuperAdmin } from '../../lib/auth';
+import { retrieveSubMerchant } from '../../lib/iyzico';
+import { normalizeIban, normalizeIdentityNumber, syncCoachSubMerchant, validateCoachPayoutInput } from '../../lib/iyzico-marketplace';
+import { getPlatformPayoutProfile, isPlatformPayoutReady, setPlatformPayoutProfile } from '../../lib/payment-settings';
+import prisma from '../../lib/prisma';
+
+const user = await getUserFromRequest(Astro.request);
+
+if (!user) {
+  return Astro.redirect('/auth/login');
+}
+
+if (!isBackofficeUser(user)) {
+  return Astro.redirect('/dashboard');
+}
+
+const adminUser = user as NonNullable<typeof user>;
+const prismaClient = prisma as any;
+const canManagePlatformPayout = isSuperAdmin(adminUser);
+
+const platformSaved = Astro.url.searchParams.get('platformSaved') === '1';
+const platformError = String(Astro.url.searchParams.get('platformError') || '').trim();
+
+function splitFullName(name: string): { firstName: string; lastName: string } {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  const firstName = parts[0] || 'CoachPro';
+  const lastName = parts.length > 1 ? parts.slice(1).join(' ') : 'Platform';
+  return { firstName, lastName };
+}
+
+function getRequestIp(request: Request): string {
+  const forwardedFor = request.headers.get('x-forwarded-for');
+  if (forwardedFor) {
+    const firstIp = forwardedFor.split(',')[0]?.trim();
+    if (firstIp) {
+      return firstIp;
+    }
+  }
+
+  const realIp = request.headers.get('x-real-ip');
+  if (realIp) {
+    return realIp;
+  }
+
+  return 'unknown';
+}
+
+async function writeAdminAuditLog(payload: {
+  action: string;
+  metadata?: Record<string, unknown>;
+}): Promise<void> {
+  try {
+    await prismaClient.adminActionAudit.create({
+      data: {
+        action: payload.action,
+        adminUserId: adminUser.id,
+        adminEmail: adminUser.email || null,
+        metadata: {
+          ...(payload.metadata || {}),
+          ip: getRequestIp(Astro.request),
+          userAgent: Astro.request.headers.get('user-agent') || null,
+          requestPath: Astro.url.pathname,
+        },
+      },
+    });
+  } catch (auditError) {
+    console.error('Admin payments audit log write failed:', auditError);
+  }
+}
+
+function maskKey(value: string | null | undefined): string {
+  const normalized = String(value || '').trim();
+  if (!normalized) {
+    return '-';
+  }
+
+  if (normalized.length <= 8) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, 4)}...${normalized.slice(-4)}`;
+}
+
+if (Astro.request.method === 'POST') {
+  const formData = await Astro.request.formData();
+  const action = String(formData.get('action') || '').trim();
+
+  try {
+    if (!canManagePlatformPayout) {
+      throw new Error('Bu islemi sadece super admin yapabilir.');
+    }
+
+    if (action === 'save_platform_payout_profile') {
+      const subMerchantType = String(formData.get('subMerchantType') || 'PERSONAL').trim();
+      const identityNumber = String(formData.get('identityNumber') || '').trim();
+      const iban = String(formData.get('iban') || '').trim();
+      const contactPhone = String(formData.get('contactPhone') || '').trim();
+      const address = String(formData.get('address') || '').trim();
+      const city = String(formData.get('city') || '').trim();
+      const zipCode = String(formData.get('zipCode') || '').trim();
+      const taxOffice = String(formData.get('taxOffice') || '').trim();
+      const legalCompanyTitle = String(formData.get('legalCompanyTitle') || '').trim();
+      const manualSubMerchantKey = String(formData.get('manualSubMerchantKey') || '').trim();
+      const manualSubMerchantExternalId = String(formData.get('manualSubMerchantExternalId') || '').trim();
+
+      const validationError = validateCoachPayoutInput({
+        subMerchantType,
+        identityNumber,
+        iban,
+        address,
+        city,
+        zipCode,
+        taxOffice: taxOffice || null,
+        legalCompanyTitle: legalCompanyTitle || null,
+      });
+
+      if (validationError) {
+        throw new Error(validationError);
+      }
+
+      if (manualSubMerchantKey && !manualSubMerchantExternalId) {
+        throw new Error('Manuel anahtar kullanimi icin SubMerchantExternalId zorunludur.');
+      }
+
+      const normalizedSubMerchantType = subMerchantType === 'PRIVATE_COMPANY' ? 'PRIVATE_COMPANY' : 'PERSONAL';
+      const existingProfile = await getPlatformPayoutProfile();
+      const platformExternalId = existingProfile.subMerchantExternalId || `platform_${adminUser.id}`;
+
+      let syncResult: {
+        ok: boolean;
+        error?: string;
+        subMerchantKey?: string;
+        subMerchantExternalId?: string;
+        subMerchantStatus?: string;
+      };
+
+      if (manualSubMerchantKey && manualSubMerchantExternalId) {
+        const retrieved = await retrieveSubMerchant({
+          locale: 'tr',
+          conversationId: `platform-manual-link-${adminUser.id}`,
+          subMerchantExternalId: manualSubMerchantExternalId,
+        }).catch(() => null);
+
+        const retrievedStatus = String((retrieved as Record<string, unknown> | null)?.status || '').toLowerCase();
+        const retrievedSubMerchantKey = String((retrieved as Record<string, unknown> | null)?.subMerchantKey || '').trim();
+
+        if (!retrieved || retrievedStatus !== 'success') {
+          syncResult = {
+            ok: false,
+            error: String((retrieved as Record<string, unknown> | null)?.errorMessage || 'Alt uye isyeri bilgisi dogrulanamadi.'),
+          };
+        } else if (retrievedSubMerchantKey && retrievedSubMerchantKey !== manualSubMerchantKey) {
+          syncResult = {
+            ok: false,
+            error: 'Girilen SubMerchantKey, verilen external id ile eslesmiyor.',
+          };
+        } else {
+          syncResult = {
+            ok: true,
+            subMerchantKey: manualSubMerchantKey,
+            subMerchantExternalId: manualSubMerchantExternalId,
+            subMerchantStatus: String((retrieved as Record<string, unknown> | null)?.subMerchantStatus || 'active'),
+          };
+        }
+      } else {
+        syncResult = await syncCoachSubMerchant({
+          coachId: `platform-${adminUser.id}`,
+          email: adminUser.email,
+          phone: contactPhone || adminUser.phone,
+          fullName: adminUser.name || 'CoachPro Platform',
+          subMerchantType: normalizedSubMerchantType,
+          identityNumber,
+          iban,
+          address,
+          city,
+          zipCode,
+          taxOffice: taxOffice || null,
+          legalCompanyTitle: legalCompanyTitle || null,
+          existingSubMerchantKey: existingProfile.subMerchantKey || null,
+          existingExternalId: existingProfile.subMerchantExternalId || platformExternalId,
+        });
+      }
+
+      const { firstName, lastName } = splitFullName(adminUser.name || 'CoachPro Platform');
+      const nowIso = new Date().toISOString();
+      const resolvedExternalId =
+        syncResult.subMerchantExternalId ||
+        existingProfile.subMerchantExternalId ||
+        manualSubMerchantExternalId ||
+        platformExternalId;
+
+      if (!syncResult.ok || !syncResult.subMerchantKey) {
+        const resolvedError = syncResult.error || 'Iyzico platform kaydi olusturulamadi.';
+
+        await setPlatformPayoutProfile({
+          subMerchantType: normalizedSubMerchantType,
+          identityNumber: normalizeIdentityNumber(identityNumber),
+          iban: normalizeIban(iban),
+          address,
+          city,
+          zipCode,
+          taxOffice: taxOffice || null,
+          legalCompanyTitle: legalCompanyTitle || null,
+          contactPhone: contactPhone || adminUser.phone || null,
+          contactName: firstName,
+          contactSurname: lastName,
+          subMerchantExternalId: resolvedExternalId,
+          lastSyncAt: nowIso,
+          lastError: resolvedError,
+          updatedBy: adminUser.id,
+        });
+
+        await writeAdminAuditLog({
+          action,
+          metadata: {
+            ok: false,
+            subMerchantType: normalizedSubMerchantType,
+            manualLinking: Boolean(manualSubMerchantKey && manualSubMerchantExternalId),
+            error: resolvedError,
+          },
+        });
+
+        return Astro.redirect(`/admin/payments?platformError=${encodeURIComponent(resolvedError)}`);
+      }
+
+      await setPlatformPayoutProfile({
+        subMerchantType: normalizedSubMerchantType,
+        identityNumber: normalizeIdentityNumber(identityNumber),
+        iban: normalizeIban(iban),
+        address,
+        city,
+        zipCode,
+        taxOffice: taxOffice || null,
+        legalCompanyTitle: legalCompanyTitle || null,
+        contactPhone: contactPhone || adminUser.phone || null,
+        contactName: firstName,
+        contactSurname: lastName,
+        subMerchantKey: syncResult.subMerchantKey,
+        subMerchantExternalId: resolvedExternalId,
+        subMerchantStatus: syncResult.subMerchantStatus || 'active',
+        payoutReadyAt: nowIso,
+        lastSyncAt: nowIso,
+        lastError: null,
+        updatedBy: adminUser.id,
+      });
+
+      await writeAdminAuditLog({
+        action,
+        metadata: {
+          ok: true,
+          subMerchantType: normalizedSubMerchantType,
+          manualLinking: Boolean(manualSubMerchantKey && manualSubMerchantExternalId),
+          subMerchantExternalId: resolvedExternalId,
+          subMerchantKeySuffix: syncResult.subMerchantKey.slice(-6),
+        },
+      });
+
+      return Astro.redirect('/admin/payments?platformSaved=1');
+    }
+  } catch (postError) {
+    const message = postError instanceof Error ? postError.message : 'Islem tamamlanamadi.';
+    return Astro.redirect(`/admin/payments?platformError=${encodeURIComponent(message)}`);
+  }
+
+  return Astro.redirect('/admin/payments');
+}
+
+const now = new Date();
+const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+
+const extractFailureReason = (metadata: unknown): string => {
+  if (!metadata || typeof metadata !== 'object') {
+    return 'Bilinmeyen hata';
+  }
+
+  const map = metadata as Record<string, unknown>;
+  const candidates = [
+    map.failureReason,
+    map.checkoutError,
+    map.error,
+    map.marketplaceFallbackReason,
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+
+  return 'Bilinmeyen hata';
+};
+
+const [
+  platformPayoutProfile,
+  totalTransactions,
+  paidTransactions,
+  pendingTransactions,
+  failedTransactions,
+  totalRevenueAgg,
+  monthRevenueAgg,
+  recentPaidTransactions,
+  recentPendingTransactions,
+  recentFailedTransactions,
+] = await Promise.all([
+  getPlatformPayoutProfile(),
+  prisma.paymentTransaction.count(),
+  prisma.paymentTransaction.count({ where: { status: 'paid' } }),
+  prisma.paymentTransaction.count({ where: { status: 'pending' } }),
+  prisma.paymentTransaction.count({ where: { status: 'failed' } }),
+  prisma.paymentTransaction.aggregate({
+    where: { status: 'paid' },
+    _sum: { amount: true },
+  }),
+  prisma.paymentTransaction.aggregate({
+    where: {
+      status: 'paid',
+      paidAt: { gte: monthStart },
+    },
+    _sum: { amount: true },
+  }),
+  prisma.paymentTransaction.findMany({
+    where: { status: 'paid' },
+    include: {
+      payer: { select: { id: true, name: true, email: true } },
+      coach: { select: { id: true, name: true, email: true } },
+      student: { select: { id: true, name: true, email: true } },
+      coachPackage: { select: { id: true, name: true, durationWeeks: true } },
+    },
+    orderBy: { paidAt: 'desc' },
+    take: 80,
+  }),
+  prisma.paymentTransaction.findMany({
+    where: { status: 'pending' },
+    include: {
+      payer: { select: { id: true, name: true, email: true } },
+      coach: { select: { id: true, name: true, email: true } },
+      student: { select: { id: true, name: true, email: true } },
+      coachPackage: { select: { id: true, name: true, durationWeeks: true } },
+    },
+    orderBy: { createdAt: 'desc' },
+    take: 80,
+  }),
+  prisma.paymentTransaction.findMany({
+    where: { status: 'failed' },
+    include: {
+      payer: { select: { id: true, name: true, email: true } },
+      coach: { select: { id: true, name: true, email: true } },
+      student: { select: { id: true, name: true, email: true } },
+      coachPackage: { select: { id: true, name: true, durationWeeks: true } },
+    },
+    orderBy: { failedAt: 'desc' },
+    take: 120,
+  }),
+]);
+
+const envPlatformSubMerchantKey = String(import.meta.env.IYZICO_PLATFORM_SUBMERCHANT_KEY || '').trim();
+const resolvedPlatformSubMerchantKey = String(platformPayoutProfile.subMerchantKey || '').trim() || envPlatformSubMerchantKey;
+const platformSubMerchantKeySource = platformPayoutProfile.subMerchantKey
+  ? 'system_setting'
+  : envPlatformSubMerchantKey
+    ? 'env'
+    : 'none';
+const iyzicoApiConfigured = Boolean(
+  String(import.meta.env.IYZICO_API_KEY || '').trim() &&
+  String(import.meta.env.IYZICO_SECRET_KEY || '').trim(),
+);
+const platformPayoutReady = isPlatformPayoutReady(platformPayoutProfile);
+
+const totalRevenue = Number(totalRevenueAgg._sum.amount || 0);
+const monthRevenue = Number(monthRevenueAgg._sum.amount || 0);
+const paymentSuccessRate = totalTransactions > 0
+  ? Math.round((paidTransactions / totalTransactions) * 100)
+  : 0;
+const failedRate = totalTransactions > 0
+  ? Math.round((failedTransactions / totalTransactions) * 100)
+  : 0;
+
+const topFailureReasons = Object.entries(
+  recentFailedTransactions.reduce((acc: Record<string, number>, tx) => {
+    const reason = extractFailureReason(tx.metadata);
+    acc[reason] = (acc[reason] || 0) + 1;
+    return acc;
+  }, {}),
+)
+  .sort((a, b) => b[1] - a[1])
+  .slice(0, 6);
+---
+<MainLayout title="Admin Odemeler" activePage="admin-payments">
+  <AdminPaymentsPanel
+    client:load
+    totalTransactions={totalTransactions}
+    paidTransactions={paidTransactions}
+    pendingTransactions={pendingTransactions}
+    failedTransactions={failedTransactions}
+    paymentSuccessRate={paymentSuccessRate}
+    failedRate={failedRate}
+    totalRevenue={totalRevenue}
+    monthRevenue={monthRevenue}
+    recentPaid={recentPaidTransactions.map((tx) => ({
+      id: tx.id,
+      type: tx.type,
+      amount: Number(tx.amount || 0),
+      status: tx.status,
+      paidAt: tx.paidAt ? tx.paidAt.toISOString() : null,
+      failedAt: tx.failedAt ? tx.failedAt.toISOString() : null,
+      createdAt: tx.createdAt.toISOString(),
+      payerName: tx.payer?.name || null,
+      payerEmail: tx.payer?.email || null,
+      coachName: tx.coach?.name || null,
+      studentName: tx.student?.name || null,
+      packageName: tx.coachPackage?.name || null,
+      failureReason: null,
+    }))}
+    recentPending={recentPendingTransactions.map((tx) => ({
+      id: tx.id,
+      type: tx.type,
+      amount: Number(tx.amount || 0),
+      status: tx.status,
+      paidAt: null,
+      failedAt: null,
+      createdAt: tx.createdAt.toISOString(),
+      payerName: tx.payer?.name || null,
+      payerEmail: tx.payer?.email || null,
+      coachName: tx.coach?.name || null,
+      studentName: tx.student?.name || null,
+      packageName: tx.coachPackage?.name || null,
+      failureReason: null,
+    }))}
+    recentFailed={recentFailedTransactions.map((tx) => ({
+      id: tx.id,
+      type: tx.type,
+      amount: Number(tx.amount || 0),
+      status: tx.status,
+      paidAt: null,
+      failedAt: tx.failedAt ? tx.failedAt.toISOString() : null,
+      createdAt: tx.createdAt.toISOString(),
+      payerName: tx.payer?.name || null,
+      payerEmail: tx.payer?.email || null,
+      coachName: tx.coach?.name || null,
+      studentName: tx.student?.name || null,
+      packageName: tx.coachPackage?.name || null,
+      failureReason: extractFailureReason(tx.metadata),
+    }))}
+    topFailureReasons={topFailureReasons.map(([reason, count]) => ({ reason, count }))}
+  />
+
+  <section class="px-6 lg:px-8 pb-8">
+    <div class="rounded-2xl border border-border-default bg-bg-secondary/70 p-5 sm:p-6 space-y-5">
+      <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 class="text-lg font-semibold text-text-primary">Platform Iyzico Hesabi</h2>
+          <p class="text-sm text-text-muted mt-1">
+            Egitmen abonelik odemelerinde marketplace moduna gecmek icin platform alt uye isyeri buradan yonetilir.
+          </p>
+        </div>
+        <span class={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium ${canManagePlatformPayout ? 'bg-accent-green/15 text-accent-green' : 'bg-bg-tertiary text-text-secondary'}`}>
+          {canManagePlatformPayout ? 'Super admin: duzenleme acik' : 'Sadece super admin duzenleyebilir'}
+        </span>
+      </div>
+
+      {platformSaved && (
+        <div class="p-3 rounded-lg border border-accent-green/30 bg-accent-green/10 text-accent-green text-sm">
+          Platform payout profili basariyla guncellendi.
+        </div>
+      )}
+
+      {platformError && (
+        <div class="p-3 rounded-lg border border-accent-red/30 bg-accent-red/10 text-accent-red text-sm">
+          {platformError}
+        </div>
+      )}
+
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div class="rounded-xl border border-border-default bg-bg-tertiary/35 p-3">
+          <p class="text-xs uppercase tracking-wide text-text-muted">Iyzico API Anahtarlari</p>
+          <p class={`mt-1 text-sm font-semibold ${iyzicoApiConfigured ? 'text-accent-green' : 'text-accent-red'}`}>
+            {iyzicoApiConfigured ? 'Hazir' : 'Eksik'}
+          </p>
+          <p class="text-xs text-text-muted mt-1">
+            IYZICO_API_KEY ve IYZICO_SECRET_KEY degerlerini guvenlik icin sunucu env'inde tutun.
+          </p>
+        </div>
+
+        <div class="rounded-xl border border-border-default bg-bg-tertiary/35 p-3">
+          <p class="text-xs uppercase tracking-wide text-text-muted">Platform SubMerchantKey</p>
+          <p class="mt-1 text-sm font-semibold text-text-primary">{maskKey(resolvedPlatformSubMerchantKey)}</p>
+          <p class="text-xs text-text-muted mt-1">
+            Kaynak: {platformSubMerchantKeySource === 'system_setting' ? 'Panel ayari (system_settings)' : platformSubMerchantKeySource === 'env' ? 'IYZICO_PLATFORM_SUBMERCHANT_KEY (env)' : 'Tanimli degil'}
+          </p>
+        </div>
+
+        <div class="rounded-xl border border-border-default bg-bg-tertiary/35 p-3">
+          <p class="text-xs uppercase tracking-wide text-text-muted">Platform Payout Durumu</p>
+          <p class={`mt-1 text-sm font-semibold ${platformPayoutReady ? 'text-accent-green' : 'text-accent-red'}`}>
+            {platformPayoutReady ? 'Hazir' : 'Eksik'}
+          </p>
+          <p class="text-xs text-text-muted mt-1">
+            Son durum: {platformPayoutProfile.subMerchantStatus || '-'}
+            {platformPayoutProfile.lastSyncAt ? `, Son senkron: ${new Date(platformPayoutProfile.lastSyncAt).toLocaleString('tr-TR')}` : ''}
+          </p>
+        </div>
+      </div>
+
+      {platformPayoutProfile.lastError && (
+        <div class="rounded-xl border border-accent-red/20 bg-accent-red/5 p-3">
+          <p class="text-xs uppercase tracking-wide text-accent-red">Son Hata</p>
+          <p class="text-sm text-accent-red mt-1">{platformPayoutProfile.lastError}</p>
+        </div>
+      )}
+
+      <div class="rounded-xl border border-border-default bg-bg-tertiary/30 p-3 text-xs text-text-muted">
+        API key/secret panelden yazilmaz. Guvenlik nedeniyle deployment ortaminda (ornek: astro-app/.env, secret manager, container env) tutulur.
+      </div>
+
+      {canManagePlatformPayout ? (
+        <form method="POST" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <input type="hidden" name="action" value="save_platform_payout_profile" />
+
+          <div>
+            <label class="label block mb-2">Satici Tipi</label>
+            <select name="subMerchantType" class="input-field" required>
+              <option value="PERSONAL" selected={platformPayoutProfile.subMerchantType !== 'PRIVATE_COMPANY'}>Bireysel</option>
+              <option value="PRIVATE_COMPANY" selected={platformPayoutProfile.subMerchantType === 'PRIVATE_COMPANY'}>Sahis Sirketi</option>
+            </select>
+          </div>
+
+          <div>
+            <label class="label block mb-2">Iletisim Telefonu</label>
+            <input
+              type="tel"
+              name="contactPhone"
+              class="input-field"
+              value={platformPayoutProfile.contactPhone || adminUser.phone || ''}
+              placeholder="05XX XXX XX XX"
+              required
+            />
+          </div>
+
+          <div class="md:col-span-2 rounded-lg border border-border-default bg-bg-secondary/30 p-3">
+            <p class="text-sm font-medium text-text-primary">Mevcut Alt Uye Isyeri Bilgileri (Opsiyonel)</p>
+            <p class="text-xs text-text-muted mt-1">
+              Iyzico panelinde hazir alt uye isyeri varsa SubMerchantKey ve ExternalId girerek dogrudan baglayabilirsiniz.
+            </p>
+          </div>
+
+          <div>
+            <label class="label block mb-2">SubMerchantKey (Opsiyonel)</label>
+            <input type="text" name="manualSubMerchantKey" class="input-field" placeholder="tjG7zZg6gbSMCLn..." />
+          </div>
+
+          <div>
+            <label class="label block mb-2">SubMerchantExternalId (Opsiyonel)</label>
+            <input type="text" name="manualSubMerchantExternalId" class="input-field" placeholder="platform_..." />
+          </div>
+
+          <div>
+            <label class="label block mb-2">T.C. Kimlik No</label>
+            <input
+              type="text"
+              name="identityNumber"
+              class="input-field"
+              value={platformPayoutProfile.identityNumber || ''}
+              placeholder="11 haneli kimlik no"
+              required
+            />
+          </div>
+
+          <div>
+            <label class="label block mb-2">IBAN</label>
+            <input
+              type="text"
+              name="iban"
+              class="input-field"
+              value={platformPayoutProfile.iban || ''}
+              placeholder="TRXX XXXX XXXX XXXX XXXX XXXX XX"
+              required
+            />
+          </div>
+
+          <div class="md:col-span-2">
+            <label class="label block mb-2">Adres</label>
+            <textarea
+              name="address"
+              rows="2"
+              class="input-field resize-none"
+              placeholder="Acik adres"
+              required
+            >{platformPayoutProfile.address || ''}</textarea>
+          </div>
+
+          <div>
+            <label class="label block mb-2">Sehir</label>
+            <input type="text" name="city" class="input-field" value={platformPayoutProfile.city || ''} placeholder="Istanbul" required />
+          </div>
+
+          <div>
+            <label class="label block mb-2">Posta Kodu</label>
+            <input type="text" name="zipCode" class="input-field" value={platformPayoutProfile.zipCode || ''} placeholder="34000" required />
+          </div>
+
+          <div>
+            <label class="label block mb-2">Vergi Dairesi (Sirket icin)</label>
+            <input type="text" name="taxOffice" class="input-field" value={platformPayoutProfile.taxOffice || ''} placeholder="Opsiyonel" />
+          </div>
+
+          <div>
+            <label class="label block mb-2">Sirket Unvani (Sirket icin)</label>
+            <input type="text" name="legalCompanyTitle" class="input-field" value={platformPayoutProfile.legalCompanyTitle || ''} placeholder="Opsiyonel" />
+          </div>
+
+          <div class="md:col-span-2 flex justify-end">
+            <button type="submit" class="btn-primary">Platform Iyzico Hesabini Senkronize Et</button>
+          </div>
+        </form>
+      ) : (
+        <p class="text-sm text-text-muted">
+          Bu formu sadece super_admin rolune sahip hesaplar guncelleyebilir.
+        </p>
+      )}
+    </div>
+  </section>
+</MainLayout>

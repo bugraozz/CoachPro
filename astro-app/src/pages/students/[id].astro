@@ -1,6 +1,7 @@
 ---
 import MainLayout from '../../layouts/MainLayout.astro';
 import { getUserFromRequest, isCoach } from '../../lib/auth';
+import { createNotification } from '../../lib/notifications';
 import prisma from '../../lib/prisma';
 
 const user = await getUserFromRequest(Astro.request);
@@ -42,72 +43,137 @@ const bmi = student.currentWeight && student.height
   ? (student.currentWeight / ((student.height / 100) ** 2)).toFixed(1) 
   : null;
 
+const ok = (Astro.url.searchParams.get('ok') || '').trim();
+const error = (Astro.url.searchParams.get('error') || '').trim();
+
 // POST işlemleri
 if (Astro.request.method === 'POST') {
   const formData = await Astro.request.formData();
-  const action = formData.get('action');
+  const action = String(formData.get('action') || '').trim();
 
-  if (action === 'update_weight') {
-    const weight = parseFloat(formData.get('weight') as string);
-    if (weight > 0) {
-      await prisma.weightRecord.create({
-        data: { userId: student.id, weight }
-      });
+  try {
+    if (action === 'update_weight') {
+      const weight = parseFloat(formData.get('weight') as string);
+      if (weight > 0) {
+        await prisma.weightRecord.create({
+          data: { userId: student.id, weight }
+        });
+        await prisma.user.update({
+          where: { id: student.id },
+          data: { currentWeight: weight }
+        });
+      }
+    }
+
+    if (action === 'update_profile') {
+      const targetWeight = formData.get('targetWeight') ? parseFloat(formData.get('targetWeight') as string) : null;
+      const height = formData.get('height') ? parseFloat(formData.get('height') as string) : null;
+      const age = formData.get('age') ? parseInt(formData.get('age') as string) : null;
+      const healthNotes = formData.get('healthNotes') as string || null;
+      const gender = formData.get('gender') as string || null;
+
       await prisma.user.update({
         where: { id: student.id },
-        data: { currentWeight: weight }
+        data: { targetWeight, height, age, healthNotes, gender }
       });
     }
-  }
 
-  if (action === 'update_profile') {
-    const targetWeight = formData.get('targetWeight') ? parseFloat(formData.get('targetWeight') as string) : null;
-    const height = formData.get('height') ? parseFloat(formData.get('height') as string) : null;
-    const age = formData.get('age') ? parseInt(formData.get('age') as string) : null;
-    const healthNotes = formData.get('healthNotes') as string || null;
-    const gender = formData.get('gender') as string || null;
-
-    await prisma.user.update({
-      where: { id: student.id },
-      data: { targetWeight, height, age, healthNotes, gender }
-    });
-  }
-
-  if (action === 'create_program') {
-    const programName = formData.get('programName') as string;
-    if (programName) {
-      await prisma.program.create({
-        data: {
-          userId: student.id,
-          name: programName,
-          startDate: new Date(),
-          status: 'active',
+    if (action === 'create_program') {
+      const programName = formData.get('programName') as string;
+      if (programName) {
+        const program = await prisma.program.create({
+          data: {
+            userId: student.id,
+            name: programName,
+            startDate: new Date(),
+            status: 'active',
+          }
+        });
+        try {
+          await createNotificationAndPush({
+            userId: student.id,
+            actorId: user.id,
+            type: 'program',
+            title: 'Yeni program',
+            body: String(programName).trim(),
+            payload: { programId: program.id },
+          });
+        } catch (err) {
+          console.error('Notification create error:', err);
         }
-      });
+      }
     }
-  }
 
-  if (action === 'create_diet') {
-    const dietName = formData.get('dietName') as string;
-    const calories = parseInt(formData.get('calories') as string) || 2000;
-    const protein = parseInt(formData.get('protein') as string) || 150;
-    const carbs = parseInt(formData.get('carbs') as string) || 200;
-    const fat = parseInt(formData.get('fat') as string) || 70;
+    if (action === 'create_diet') {
+      const dietName = formData.get('dietName') as string;
+      const calories = parseInt(formData.get('calories') as string) || 2000;
+      const protein = parseInt(formData.get('protein') as string) || 150;
+      const carbs = parseInt(formData.get('carbs') as string) || 200;
+      const fat = parseInt(formData.get('fat') as string) || 70;
 
-    if (dietName) {
-      await prisma.dietPlan.create({
+      if (dietName) {
+        const diet = await prisma.dietPlan.create({
+          data: {
+            userId: student.id,
+            name: dietName,
+            startDate: new Date(),
+            dailyCalorieTarget: calories,
+            proteinTarget: protein,
+            carbsTarget: carbs,
+            fatTarget: fat,
+            active: true,
+          }
+        });
+        try {
+          await createNotificationAndPush({
+            userId: student.id,
+            actorId: user.id,
+            type: 'diet',
+            title: 'Yeni diyet',
+            body: String(dietName).trim(),
+            payload: { dietId: diet.id },
+          });
+        } catch (err) {
+          console.error('Notification create error:', err);
+        }
+      }
+    }
+
+    if (action === 'extend_membership' || action === 'gift_membership') {
+      const daysRaw = parseInt(String(formData.get('days') || '30').trim(), 10);
+      const days = Number.isNaN(daysRaw) ? -1 : Math.min(36500, Math.max(1, daysRaw));
+
+      if (days <= 0) {
+        throw new Error('Gecersiz sure.');
+      }
+
+      const now = new Date();
+      const baseAccessDate = student.studentAccessEnd && new Date(student.studentAccessEnd) > now
+        ? new Date(student.studentAccessEnd)
+        : now;
+
+      const nextAccessEnd = new Date(baseAccessDate);
+      nextAccessEnd.setDate(nextAccessEnd.getDate() + days);
+
+      await prisma.user.update({
+        where: { id: student.id },
         data: {
-          userId: student.id,
-          name: dietName,
-          startDate: new Date(),
-          dailyCalorieTarget: calories,
-          proteinTarget: protein,
-          carbsTarget: carbs,
-          fatTarget: fat,
           active: true,
-        }
+          studentPaymentStatus: 'paid',
+          studentPaidAt: student.studentPaidAt || now,
+          studentAccessEnd: nextAccessEnd,
+        },
       });
+
+      if (action === 'gift_membership') {
+        return Astro.redirect(`/students/${id}?ok=membership-gifted`);
+      }
+
+      return Astro.redirect(`/students/${id}?ok=membership-extended`);
     }
+  } catch (postError) {
+    const message = postError instanceof Error ? postError.message : 'Islem tamamlanamadi.';
+    return Astro.redirect(`/students/${id}?error=${encodeURIComponent(message)}`);
   }
 
   return Astro.redirect(`/students/${id}`);
@@ -148,6 +214,18 @@ if (Astro.request.method === 'POST') {
   </header>
 
   <div class="p-6 lg:p-8">
+    {ok && (
+      <div class="mb-6 p-4 rounded-lg bg-accent-green/10 border border-accent-green/20 text-accent-green text-sm">
+        {ok === 'membership-extended' ? 'Ogrenci uyeligi basariyla uzatildi.' : ok === 'membership-gifted' ? 'Ogrenciye ucretsiz uyelik tanimlandi.' : 'Islem basariyla tamamlandi.'}
+      </div>
+    )}
+
+    {error && (
+      <div class="mb-6 p-4 rounded-lg bg-accent-red/10 border border-accent-red/20 text-accent-red text-sm">
+        {error}
+      </div>
+    )}
+
     <!-- Profile Card -->
     <div class="card mb-8">
       <div class="flex flex-col lg:flex-row lg:items-center gap-6">
@@ -195,10 +273,41 @@ if (Astro.request.method === 'POST') {
             <span class={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm ${student.studentPaymentStatus === 'paid' ? 'bg-accent-green/10 text-accent-green' : 'bg-accent-red/10 text-accent-red'}`}>
               {student.studentPaymentStatus === 'paid' ? 'Ücret Ödendi' : 'Ödeme Bekleniyor'}
             </span>
+            <span class={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm ${student.studentAccessEnd && new Date(student.studentAccessEnd) > new Date() ? 'bg-accent-green/10 text-accent-green' : 'bg-accent-orange/10 text-accent-orange'}`}>
+              Erişim Bitişi: {student.studentAccessEnd ? new Date(student.studentAccessEnd).toLocaleDateString('tr-TR') : 'Tanımsız'}
+            </span>
             <span class="inline-flex items-center gap-2 px-3 py-1.5 bg-bg-tertiary rounded-lg text-sm text-text-secondary">
               Paket: {student.selectedPackage?.name || 'Seçilmedi'}
             </span>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card mb-8">
+      <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <h3 class="text-lg font-semibold text-text-primary">Uyelik Islemleri</h3>
+          <p class="text-sm text-text-muted mt-1">Bu ogrencinin erisim suresini uzatabilir veya ucretsiz uyelik hediye edebilirsiniz.</p>
+          <p class="text-xs text-text-muted mt-2">
+            Mevcut bitis: {student.studentAccessEnd ? new Date(student.studentAccessEnd).toLocaleString('tr-TR') : 'Tanimsiz'}
+          </p>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full lg:w-auto">
+          <form method="POST" class="rounded-xl border border-border-default bg-bg-tertiary/25 p-3 space-y-2">
+            <input type="hidden" name="action" value="extend_membership" />
+            <label class="label text-xs">Uzatma Suresi (gun)</label>
+            <input type="number" name="days" min="1" max="36500" value="30" class="input-field h-10 text-sm" required />
+            <button type="submit" class="btn-secondary w-full text-xs">Uyeligi Uzat</button>
+          </form>
+
+          <form method="POST" class="rounded-xl border border-accent-green/20 bg-accent-green/5 p-3 space-y-2">
+            <input type="hidden" name="action" value="gift_membership" />
+            <label class="label text-xs">Hediye Suresi (gun)</label>
+            <input type="number" name="days" min="1" max="36500" value="30" class="input-field h-10 text-sm" required />
+            <button type="submit" class="w-full px-4 py-2.5 rounded-lg text-xs font-medium bg-accent-green text-white hover:opacity-90 transition-opacity">Ucretsiz Hediye Et</button>
+          </form>
         </div>
       </div>
     </div>

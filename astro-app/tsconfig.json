@@ -10,12 +10,13 @@
     "jsxImportSource": "react",
     "lib": ["DOM", "DOM.Iterable", "ESNext"],
     "strict": true,
-    "ignoreDeprecations": "6.0",
     "baseUrl": ".",
     "paths": {
       "@/*": ["./src/*"]
     },
-    "types": ["node", "astro/client"]
+    "types": ["node", "astro/client"],
+    "skipLibCheck": true
   },
-  "include": ["src"]
+  "include": ["src"],
+  "exclude": [".astro", "node_modules", "dist"]
 }

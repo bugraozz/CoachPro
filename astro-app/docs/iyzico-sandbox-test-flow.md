@@ -10,7 +10,10 @@ Bu dokuman, odeme akisinin 1-2-3 sirasinda test edilmesi icin hazirlandi.
   - `IYZICO_API_KEY`
   - `IYZICO_SECRET_KEY`
   - `IYZICO_BASE_URL`
-  - `ADMIN_EMAILS` (Backoffice sekmesini gorecek kullanicilar icin, virgul ile ayrilmis)
+  - `IYZICO_WEBHOOK_SECRET` (onerilir, bos ise `PAYMENT_LINK_SECRET`, o da bos ise `IYZICO_SECRET_KEY` fallback kullanilir)
+  - `IYZICO_WEBHOOK_TRUSTED_IPS` (opsiyonel, callback kaynak IP allowlist)
+  - `IYZICO_WEBHOOK_TRUSTED_IPS_FILE` (onerilir-prod, allowlist dosyasi)
+  - `IYZICO_PLATFORM_SUBMERCHANT_KEY` (opsiyonel fallback)
 - Uygulamayi baslat:
   - `pnpm dev`
   - veya workspace kokunden: `npm run dev` / `npm run dev:host`
@@ -24,7 +27,28 @@ Bu dokuman, odeme akisinin 1-2-3 sirasinda test edilmesi icin hazirlandi.
 Beklenen:
 - Coach ve Student checkout istekleri 200 donebilir.
 - `payment_transactions` tablosunda `pending` kayitlar olusur.
-- Student odemesinde marketplace parametresi sandbox hesabinda reddedilirse sistem otomatik olarak `platform_fallback` ile checkout olusturur.
+- Student odemesi strict marketplace akisindadir; egitmen payout profili (`iyzicoSubMerchantKey` + `iyzicoPayoutReadyAt`) yoksa checkout 400 ile reddedilir.
+
+### 1.5 Super admin platform payout onboarding
+- `super_admin` rolune sahip bir hesapla `http://localhost:4321/admin/payments` sayfasina gir.
+- "Platform Iyzico Hesabi" formunu doldurup senkronize et.
+
+Beklenen:
+- Platform `subMerchantKey` panel ayari olarak saklanir (`system_settings`).
+- Egitmen abonelik checkout akisinda platform marketplace routing bu anahtari kullanir.
+- Panel ayari yoksa sistem `IYZICO_PLATFORM_SUBMERCHANT_KEY` env degerine fallback yapar.
+
+### 1.4 Deterministik contract e2e (mock IyziCo)
+- Script:
+  - `scripts/payments-contract-e2e.mjs`
+- Calistir:
+  - `npm run payments:contract`
+
+Beklenen:
+- Success callback sonrasi transaction `paid` olur.
+- Fail callback sonrasi transaction `failed` olur.
+- Retry akisinda yeni transaction metadata alaninda `retryOfTransactionId`/`retryAttempt` bulunur.
+- Onceki failed transaction metadata alaninda `retriedAt` ve `lastRetryTransactionId` guncellenir.
 
 ### 1.2 Kayit ve odeme baslatma
 1. `http://localhost:4321/auth/register` sayfasina git.
@@ -55,6 +79,9 @@ Beklenen:
 ### 2.2 Callback dogrulama davranisi
 Iyzico callback geldiginde sistem su kontrolleri yapar:
 - host dogrulamasi (`PUBLIC_APP_URL` host ile eslesme)
+- callback URL HMAC imza dogrulamasi (`sig` query param)
+- (opsiyonel) kaynak IP allowlist dogrulamasi (`IYZICO_WEBHOOK_TRUSTED_IPS`)
+- (opsiyonel) kaynak IP allowlist dosyasi (`IYZICO_WEBHOOK_TRUSTED_IPS_FILE`)
 - `conversationId` / `basketId` -> transaction id eslesmesi
 - para birimi (`TRY`) kontrolu
 - tutar kontrolu (`paidPrice` vs transaction amount)
@@ -91,7 +118,7 @@ Beklenen:
   - En Sik Hata Nedenleri
 
 ### 3.5 Backoffice izleme
-- `ADMIN_EMAILS` ortam degiskeninde bulunan bir hesapla giris yap.
+- `admin` veya `super_admin` rolune sahip bir hesapla giris yap.
 - `http://localhost:4321/settings?tab=backoffice`
 
 Beklenen:
@@ -100,8 +127,8 @@ Beklenen:
 - Son basarisiz ogrenci odeme denemeleri hata nedenleriyle gorunur.
 
 Not:
-- `ADMIN_EMAILS` bos ise, local development ortaminda coach kullanicilar backoffice sekmesini gorebilir.
-- Uretimde sadece `ADMIN_EMAILS` veya `admin` rolundeki hesaplar erisim alir.
+- Backoffice erisimi sadece `admin` veya `super_admin` rolune verilir.
+- Ilk yetkili hesap icin `npm run admin:bootstrap -- <email>` komutu kullanilir.
 
 ### 3.3 API raporlama
 - Endpoint: `GET /api/payments/report`
@@ -128,6 +155,8 @@ Script sirasi:
 
 - 401 aliyorsan: login/session yoktur.
 - 403 webhook aliyorsan: callback host `PUBLIC_APP_URL` ile uyusmuyordur.
+- 403 webhook aliyorsan: callback `sig` imzasi gecersizdir veya `IYZICO_WEBHOOK_TRUSTED_IPS` allowlist'i istegi blokluyordur.
 - 400 webhook aliyorsan: token eksik veya dogrulama mismatch olabilir.
 - Iyzico sayfasi acilmiyorsa: `.env` anahtarlari ve `IYZICO_BASE_URL` degerini kontrol et.
-- Student checkout `subMerchantKey` hatasi aliyorsa: Iyzico hesabin standard olabilir; sistem `platform_fallback` ile devam eder.
+- Super admin API key sorusu icin: `IYZICO_API_KEY` ve `IYZICO_SECRET_KEY` degerleri guvenlik nedeniyle panelden degil env/secret manager uzerinden verilir.
+- Student checkout `subMerchantKey` hatasi aliyorsan: egitmenin payout profili eksik olabilir; once `/settings?tab=account` uzerinden onboarding tamamlanmalidir.

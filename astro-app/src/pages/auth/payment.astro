@@ -1,15 +1,26 @@
 ---
 import prisma from '../../lib/prisma';
-import { createSession, createSessionCookie } from '../../lib/auth';
+import {
+  createPaymentAccessCookie,
+  createSession,
+  createSessionCookie,
+  deletePaymentAccessCookie,
+  getPaymentAccessToken,
+  syncMembershipAccessState,
+  verifyPaymentAccessToken,
+} from '../../lib/auth';
 import {
   calculateDiscountedAmount,
+  getCoachSubscriptionPlans,
+  getCoachSubscriptionPlanDiscounts,
   getCoachStudentPackageDiscount,
   getGlobalCoachSubscriptionDiscount,
+  resolveCoachSubscriptionDiscountAmount,
 } from '../../lib/pricing';
-
-const COACH_SUBSCRIPTION_PRICE_TRY = 299;
+import PublicLayout from '../../layouts/PublicLayout.astro';
 
 const userId = Astro.url.searchParams.get('userId');
+const incomingPaymentToken = (Astro.url.searchParams.get('pt') || '').trim();
 const checkoutSessionId = (Astro.url.searchParams.get('session_id') || '').trim();
 const cancelled = Astro.url.searchParams.get('cancelled') === '1';
 
@@ -17,7 +28,35 @@ if (!userId) {
   return Astro.redirect('/auth/register');
 }
 
-const baseUser = await prisma.user.findUnique({
+if (incomingPaymentToken) {
+  if (!verifyPaymentAccessToken(incomingPaymentToken, userId)) {
+    return Astro.redirect('/auth/register');
+  }
+
+  const nextQuery = new URLSearchParams({ userId });
+  if (checkoutSessionId) {
+    nextQuery.set('session_id', checkoutSessionId);
+  }
+  if (cancelled) {
+    nextQuery.set('cancelled', '1');
+  }
+
+  const headers = new Headers();
+  headers.set('Location', `/auth/payment?${nextQuery.toString()}`);
+  headers.append('Set-Cookie', createPaymentAccessCookie(incomingPaymentToken));
+
+  return new Response(null, {
+    status: 302,
+    headers,
+  });
+}
+
+const paymentToken = (getPaymentAccessToken(Astro.request.headers.get('cookie')) || '').trim();
+if (!paymentToken || !verifyPaymentAccessToken(paymentToken, userId)) {
+  return Astro.redirect('/auth/register');
+}
+
+const fetchedUser = await prisma.user.findUnique({
   where: { id: userId },
   include: {
     coach: {
@@ -31,9 +70,11 @@ const baseUser = await prisma.user.findUnique({
   },
 });
 
-if (!baseUser) {
+if (!fetchedUser) {
   return Astro.redirect('/auth/register');
 }
+
+const baseUser = await syncMembershipAccessState(fetchedUser);
 
 const isCoachFlow = baseUser.role === 'coach' && baseUser.subscriptionStatus === 'pending';
 const isStudentFlow = baseUser.role === 'student' && baseUser.studentPaymentStatus !== 'paid';
@@ -44,15 +85,31 @@ if (!isCoachFlow && !isStudentFlow && !canInspectExistingCheckout) {
 }
 
 const coachPackages = isStudentFlow ? (baseUser.coach?.coachPackages || []) : [];
-const globalCoachDiscount = isCoachFlow ? await getGlobalCoachSubscriptionDiscount() : null;
-const coachSubscriptionPricing = calculateDiscountedAmount(
-  COACH_SUBSCRIPTION_PRICE_TRY,
-  globalCoachDiscount?.enabled ? globalCoachDiscount.amount : 0,
-);
+const [globalCoachDiscount, coachPlanDiscounts] = isCoachFlow
+  ? await Promise.all([
+      getGlobalCoachSubscriptionDiscount(),
+      getCoachSubscriptionPlanDiscounts(),
+    ])
+  : [null, null];
+const coachPlanOptions = isCoachFlow
+  ? (await getCoachSubscriptionPlans()).map((plan) => ({
+      ...plan,
+      pricing: calculateDiscountedAmount(
+        plan.price,
+        resolveCoachSubscriptionDiscountAmount({
+          planId: plan.id,
+          planDiscounts: coachPlanDiscounts,
+          globalDiscount: globalCoachDiscount,
+        }),
+      ),
+    }))
+  : [];
+const defaultCoachPlan = coachPlanOptions.find((plan) => plan.recommended) || coachPlanOptions[0] || null;
+const hasAnyCoachPlanDiscount = coachPlanOptions.some((plan) => plan.pricing.discountAmount > 0);
 const coachPackageDiscount = isStudentFlow
   ? await getCoachStudentPackageDiscount(baseUser.coachId)
   : { enabled: false, amount: 0, updatedAt: null, updatedBy: null };
-const packageOptions = coachPackages.map((pkg) => {
+const packageOptions = coachPackages.map((pkg: any) => {
   const pricing = calculateDiscountedAmount(
     pkg.price,
     coachPackageDiscount.enabled ? coachPackageDiscount.amount : 0,
@@ -78,14 +135,14 @@ const checkoutTransaction = checkoutSessionId
 
 if (checkoutTransaction?.status === 'paid') {
   const token = await createSession(userId);
-  const cookie = createSessionCookie(token);
+  const headers = new Headers();
+  headers.set('Location', '/dashboard');
+  headers.append('Set-Cookie', createSessionCookie(token));
+  headers.append('Set-Cookie', deletePaymentAccessCookie());
 
   return new Response(null, {
     status: 302,
-    headers: {
-      Location: '/dashboard',
-      'Set-Cookie': cookie,
-    },
+    headers,
   });
 }
 
@@ -101,14 +158,10 @@ const awaitingWebhook = Boolean(checkoutSessionId) && (!checkoutTransaction || c
 const retryOfTransactionId = checkoutTransaction?.status === 'failed' ? checkoutTransaction.id : '';
 ---
 
-<html lang="tr">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Odeme - CoachPro</title>
-  <link rel="stylesheet" href="/src/styles/global.css" />
-</head>
-<body class="min-h-screen bg-bg-primary flex items-center justify-center p-4">
+<PublicLayout
+  title="Odeme - CoachPro"
+  bodyClass="min-h-screen bg-bg-primary flex items-center justify-center p-4"
+>
   <div class="w-full max-w-2xl">
     <div class="text-center mb-8">
       <a href="/" class="inline-flex items-center gap-3">
@@ -132,34 +185,71 @@ const retryOfTransactionId = checkoutTransaction?.status === 'failed' ? checkout
       </div>
 
       {isCoachFlow ? (
-        <div class="p-5 rounded-xl bg-linear-to-br from-accent-primary/10 to-accent-purple/10 border border-accent-primary/20 mb-6">
-          <div class="flex items-center justify-between mb-4">
-            <div>
-              <h3 class="font-semibold text-text-primary">Aylik Plan</h3>
-              <p class="text-sm text-text-secondary">Sinirsiz ogrenci, tum ozellikler</p>
-            </div>
-            <div class="text-right">
-              {coachSubscriptionPricing.discountAmount > 0 ? (
-                <div class="space-y-1">
-                  <div class="text-sm text-text-muted line-through">₺{coachSubscriptionPricing.baseAmount}</div>
-                  <div class="text-3xl font-bold text-accent-primary">₺{coachSubscriptionPricing.finalAmount}</div>
+        <div class="mb-6 space-y-4">
+          {coachPlanOptions.length > 0 ? (
+            <>
+              <div class="p-4 rounded-xl bg-accent-primary/10 border border-accent-primary/20">
+                <p class="text-sm text-text-secondary">Abonelik Plani Secimi</p>
+                <p class="text-xs text-text-muted mt-1">Aylik veya yillik plan secerek odemeye devam edin.</p>
+              </div>
+
+              {hasAnyCoachPlanDiscount && (
+                <div class="p-4 rounded-xl bg-accent-green/10 border border-accent-green/20">
+                  <p class="text-sm font-semibold text-accent-green">Plan bazli kampanya aktif</p>
+                  <p class="text-xs text-text-secondary mt-1">Aylik ve yillik planlar icin ayri indirim kurallari uygulanir.</p>
                 </div>
-              ) : (
-                <div class="text-3xl font-bold text-accent-primary">₺{coachSubscriptionPricing.finalAmount}</div>
               )}
-              <div class="text-xs text-text-muted">/ay</div>
-            </div>
-          </div>
-          {coachSubscriptionPricing.discountAmount > 0 && (
-            <div class="mb-4 inline-flex items-center gap-2 rounded-lg bg-accent-green/10 border border-accent-green/20 px-3 py-1 text-xs font-semibold text-accent-green">
-              Admin indirimi aktif: -₺{coachSubscriptionPricing.discountAmount}
+
+              <div class="grid grid-cols-1 gap-3">
+                {coachPlanOptions.map((plan: any) => (
+                  <label class="coach-plan-option cursor-pointer block">
+                    <input
+                      type="radio"
+                      name="subscriptionPlanId"
+                      value={plan.id}
+                      form="paymentForm"
+                      class="peer sr-only coach-plan-radio"
+                      checked={defaultCoachPlan?.id === plan.id}
+                      required
+                    />
+
+                    <div class="rounded-xl border border-border-default p-4 transition-all peer-checked:border-accent-primary peer-checked:bg-accent-primary/5 hover:border-accent-primary/40">
+                      <div class="flex items-start justify-between gap-3">
+                        <div>
+                          <div class="flex items-center gap-2">
+                            <p class="font-semibold text-text-primary">{plan.label}</p>
+                            {plan.recommended && (
+                              <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-accent-green/10 border border-accent-green/20 text-accent-green">
+                                Onerilen
+                              </span>
+                            )}
+                          </div>
+                          <p class="text-sm text-text-secondary mt-1">{plan.description}</p>
+                          <p class="text-xs text-text-muted mt-2">Sure: {plan.months} ay</p>
+                        </div>
+
+                        <div class="text-right shrink-0">
+                          {plan.pricing.discountAmount > 0 ? (
+                            <div class="space-y-1">
+                              <div class="text-xs text-text-muted line-through">₺{plan.pricing.baseAmount}</div>
+                              <div class="text-2xl font-bold text-accent-primary">₺{plan.pricing.finalAmount}</div>
+                            </div>
+                          ) : (
+                            <div class="text-2xl font-bold text-accent-primary">₺{plan.pricing.finalAmount}</div>
+                          )}
+                          <div class="text-xs text-text-muted">{plan.months === 12 ? '/yil' : '/ay'}</div>
+                        </div>
+                      </div>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            </>
+          ) : (
+            <div class="p-4 rounded-lg bg-accent-red/10 border border-accent-red/20 text-accent-red text-sm">
+              Egitmen plan ayarlari bulunamadi. Lutfen yoneticiyle iletisime gecin.
             </div>
           )}
-          <ul class="space-y-2 text-sm text-text-secondary">
-            <li class="flex items-center gap-2"><span class="text-accent-green">✓</span> Sinirsiz ogrenci ekleme</li>
-            <li class="flex items-center gap-2"><span class="text-accent-green">✓</span> Program ve diyet yonetimi</li>
-            <li class="flex items-center gap-2"><span class="text-accent-green">✓</span> AI destekli analiz</li>
-          </ul>
         </div>
       ) : (
         <div class="mb-6 space-y-4">
@@ -173,7 +263,7 @@ const retryOfTransactionId = checkoutTransaction?.status === 'failed' ? checkout
           {coachPackageDiscount.enabled && coachPackageDiscount.amount > 0 && (
             <div class="p-4 rounded-xl bg-accent-green/10 border border-accent-green/20">
               <p class="text-sm font-semibold text-accent-green">Referans indirimi aktif</p>
-              <p class="text-xs text-text-secondary mt-1">Bu egitmenin tum paketlerinde ₺{coachPackageDiscount.amount} indirim uygulanir.</p>
+              <p class="text-xs text-text-secondary mt-1">Bu egitmenin tum paketlerinde %{coachPackageDiscount.amount} indirim uygulanir.</p>
             </div>
           )}
 
@@ -181,7 +271,7 @@ const retryOfTransactionId = checkoutTransaction?.status === 'failed' ? checkout
             <div>
               <p class="text-sm font-semibold text-text-primary mb-3">Paket Secimi</p>
               <div class="grid grid-cols-1 gap-3">
-                {packageOptions.map((pkg) => (
+                {packageOptions.map((pkg: any) => (
                   <label class="package-option cursor-pointer block">
                     <input
                       type="radio"
@@ -240,23 +330,28 @@ const retryOfTransactionId = checkoutTransaction?.status === 'failed' ? checkout
         class="space-y-5"
         id="paymentForm"
         data-user-id={userId}
+        data-coach-flow={isCoachFlow ? '1' : '0'}
         data-student-flow={isStudentFlow ? '1' : '0'}
         data-checkout-session-id={checkoutSessionId}
         data-awaiting-webhook={awaitingWebhook ? '1' : '0'}
         data-retry-of-transaction-id={retryOfTransactionId}
-        data-coach-button-label={`Iyzico ile ₺${coachSubscriptionPricing.finalAmount} Ode ve Basla`}
+        data-coach-button-label="Secilen Koc Planini Iyzico ile Ode"
         data-student-button-label="Secilen Paketi Iyzico ile Ode"
       >
         <button
           type="submit"
           id="payButton"
           class="btn-primary w-full py-3"
-          disabled={isStudentFlow && packageOptions.length === 0 || awaitingWebhook}
+          disabled={
+            awaitingWebhook ||
+            (isStudentFlow && packageOptions.length === 0) ||
+            (isCoachFlow && coachPlanOptions.length === 0)
+          }
         >
           {awaitingWebhook
             ? 'Odeme Onayi Bekleniyor...'
             : isCoachFlow
-              ? `Iyzico ile ₺${coachSubscriptionPricing.finalAmount} Ode ve Basla`
+              ? 'Secilen Koc Planini Iyzico ile Ode'
               : 'Secilen Paketi Iyzico ile Ode'}
         </button>
 
@@ -280,6 +375,7 @@ const retryOfTransactionId = checkoutTransaction?.status === 'failed' ? checkout
     const payButtonElement = payButton instanceof HTMLButtonElement ? payButton : null;
 
     const userId = formElement?.dataset.userId || '';
+    const isCoachFlow = formElement?.dataset.coachFlow === '1';
     const isStudentFlow = formElement?.dataset.studentFlow === '1';
     const checkoutSessionId = formElement?.dataset.checkoutSessionId || '';
     const awaitingWebhook = formElement?.dataset.awaitingWebhook === '1';
@@ -300,12 +396,23 @@ const retryOfTransactionId = checkoutTransaction?.status === 'failed' ? checkout
       }
 
       let packageId = '';
+      let subscriptionPlanId = '';
       if (isStudentFlow) {
         const selectedRadio = document.querySelector('input[name="packageId"]:checked');
         packageId = selectedRadio ? selectedRadio.value : '';
 
         if (!packageId) {
           alert('Lutfen bir paket secin.');
+          return;
+        }
+      }
+
+      if (isCoachFlow) {
+        const selectedCoachPlan = document.querySelector('input[name="subscriptionPlanId"]:checked');
+        subscriptionPlanId = selectedCoachPlan ? selectedCoachPlan.value : '';
+
+        if (!subscriptionPlanId) {
+          alert('Lutfen bir abonelik plani secin.');
           return;
         }
       }
@@ -320,6 +427,7 @@ const retryOfTransactionId = checkoutTransaction?.status === 'failed' ? checkout
           body: JSON.stringify({
             userId,
             packageId,
+            subscriptionPlanId,
             retryOfTransactionId: retryOfTransactionId || undefined,
           }),
         });
@@ -354,6 +462,14 @@ const retryOfTransactionId = checkoutTransaction?.status === 'failed' ? checkout
         }
       });
     });
+
+    document.querySelectorAll('.coach-plan-radio').forEach((radio) => {
+      radio.addEventListener('change', () => {
+        if (!awaitingWebhook && payButtonElement) {
+          payButtonElement.removeAttribute('disabled');
+          payButtonElement.textContent = coachButtonLabel;
+        }
+      });
+    });
   </script>
-</body>
-</html>
+</PublicLayout>

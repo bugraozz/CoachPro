@@ -1,7 +1,18 @@
 ---
 import ShapeGrid from '../../components/ShapeGrid';
-import { verifyPassword, createSession, createSessionCookie, getUserFromRequest, isBackofficeUser } from '../../lib/auth';
+import {
+  verifyPassword,
+  createSession,
+  createSessionCookie,
+  createPaymentAccessCookie,
+  createPaymentAccessToken,
+  getUserFromRequest,
+  isBackofficeUser,
+  requiresPaymentStep,
+  syncMembershipAccessState,
+} from '../../lib/auth';
 import prisma from '../../lib/prisma';
+import PublicLayout from '../../layouts/PublicLayout.astro';
 
 // Zaten giriş yapmışsa dashboard'a yönlendir
 const user = await getUserFromRequest(Astro.request);
@@ -12,51 +23,112 @@ if (user) {
 let error = '';
 
 if (Astro.request.method === 'POST') {
-  const formData = await Astro.request.formData();
-  
-  const email = formData.get('email') as string;
-  const password = formData.get('password') as string;
+  const contentType = Astro.request.headers.get('content-type') || '';
+  const isJsonRequest = contentType.toLowerCase().includes('application/json');
+  const requestBody = isJsonRequest ? await Astro.request.json() : null;
+  const formData = isJsonRequest ? null : await Astro.request.formData();
+
+  const email = String(isJsonRequest ? requestBody?.email : formData?.get('email') || '').trim().toLowerCase();
+  const password = String(isJsonRequest ? requestBody?.password : formData?.get('password') || '');
 
   if (!email || !password) {
     error = 'E-posta ve şifre gereklidir.';
   } else {
-    const user = await prisma.user.findUnique({ where: { email } });
+    const existingUser = await prisma.user.findUnique({ where: { email } });
     
-    if (!user) {
-      error = 'E-posta veya şifre hatalı.';
-    } else if (!user.active) {
-      error = 'Hesabınız aktif değil. Lütfen kayıt ödeme adımını tamamlayın.';
-    } else {
-      const isValid = await verifyPassword(password, user.password);
-      
-      if (!isValid) {
-        error = 'E-posta veya şifre hatalı.';
-      } else {
-        // Session oluştur
-        const token = await createSession(user.id);
-        const cookie = createSessionCookie(token);
-        
-        return new Response(null, {
-          status: 302,
-          headers: {
-            'Location': isBackofficeUser(user) ? '/admin' : '/dashboard',
-            'Set-Cookie': cookie,
-          },
+    if (!existingUser) {
+      if (isJsonRequest) {
+        return new Response(JSON.stringify({ error: 'E-posta veya şifre hatalı.' }), {
+          status: 401,
+          headers: { 'Content-Type': 'application/json' },
         });
+      }
+      error = 'E-posta veya şifre hatalı.';
+    } else {
+      const user = await syncMembershipAccessState(existingUser);
+
+      if (!user.active) {
+        if (requiresPaymentStep(user)) {
+          const paymentToken = createPaymentAccessToken(user.id);
+          const headers = new Headers();
+          headers.set('Location', `/auth/payment?userId=${encodeURIComponent(user.id)}`);
+          headers.append('Set-Cookie', createPaymentAccessCookie(paymentToken));
+
+          if (isJsonRequest) {
+            const { password: _, ...safeUser } = user;
+            return new Response(JSON.stringify({
+              error: 'Hesabınız aktif değil. Lütfen ödeme işlemini tamamlayın.',
+              requiresPayment: true,
+              user: { id: user.id, email: user.email, name: user.name, role: user.role },
+              paymentAccessToken: createPaymentAccessToken(user.id),
+            }), {
+              status: 403,
+              headers: { 'Content-Type': 'application/json' },
+            });
+          }
+
+          return new Response(null, {
+            status: 302,
+            headers,
+          });
+        }
+
+        if (isJsonRequest) {
+          return new Response(JSON.stringify({ error: 'Hesabınız aktif değil.' }), {
+            status: 403,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        error = 'Hesabınız aktif değil. Lütfen kayıt ödeme adımını tamamlayın.';
+      } else {
+        const isValid = await verifyPassword(password, user.password);
+      
+        if (!isValid) {
+          if (isJsonRequest) {
+            return new Response(JSON.stringify({ error: 'E-posta veya şifre hatalı.' }), {
+              status: 401,
+              headers: { 'Content-Type': 'application/json' },
+            });
+          }
+
+          error = 'E-posta veya şifre hatalı.';
+        } else {
+          // Session oluştur
+          const token = await createSession(user.id);
+
+          if (isJsonRequest) {
+            const { password: _, ...safeUser } = user;
+            return new Response(JSON.stringify({
+              success: true,
+              token,
+              user: safeUser,
+            }), {
+              status: 200,
+              headers: { 'Content-Type': 'application/json' },
+            });
+          }
+
+          const cookie = createSessionCookie(token);
+          return new Response(null, {
+            status: 302,
+            headers: {
+              'Location': isBackofficeUser(user) ? '/admin' : '/dashboard',
+              'Set-Cookie': cookie,
+            },
+          });
+        }
       }
     }
   }
 }
 ---
 
-<html lang="tr">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Giriş Yap - CoachPro</title>
-  <link rel="stylesheet" href="/src/styles/global.css" />
-</head>
-<body class="min-h-screen relative bg-white" style="background-color: #ffffff;">
+<PublicLayout
+  title="Giriş Yap - CoachPro"
+  bodyClass="min-h-screen relative bg-white"
+  bodyStyle="background-color: #ffffff;"
+>
   <!-- Subtle ShapeGrid Background -->
   <div class="fixed inset-0 z-0 bg-white pointer-events-none opacity-10">
     <ShapeGrid
@@ -79,7 +151,6 @@ if (Astro.request.method === 'POST') {
         <span class="text-xl font-bold text-gray-900">CoachPro</span>
       </a>
       <div class="flex items-center gap-4">
-        <a href="/auth/register" class="text-sm font-medium text-gray-600 hover:text-gray-900 transition-colors">Kayıt Ol</a>
         <a href="/auth/register" class="btn-primary">Ücretsiz Başla</a>
       </div>
     </div>
@@ -144,7 +215,10 @@ if (Astro.request.method === 'POST') {
           </div>
 
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1.5" for="password">Şifre</label>
+            <div class="flex items-center justify-between mb-1.5">
+              <label class="block text-sm font-medium text-gray-700" for="password">Şifre</label>
+              <a href="/auth/forgot-password" class="text-sm font-medium text-red-600 hover:text-red-700">Şifremi Unuttum</a>
+            </div>
             <div class="relative">
               <input type="password" id="password" name="password" class="w-full px-4 py-3 rounded-lg border border-gray-300 bg-white text-gray-900 text-sm placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-red-200 focus:border-red-400 transition-all pr-11" placeholder="••••••••" required />
               <button type="button" id="togglePass" class="absolute right-3.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors">
@@ -194,5 +268,4 @@ if (Astro.request.method === 'POST') {
       input.type = input.type === 'password' ? 'text' : 'password';
     });
   </script>
-</body>
-</html>
+</PublicLayout>

@@ -1,0 +1,101 @@
+[
+  {
+    "name": "analysis health reachable",
+    "method": "GET",
+    "path": "/api/analysis/health",
+    "expected": "200,503",
+    "status": 200,
+    "pass": true,
+    "bodySnippet": "{\"status\":\"ok\",\"python\":true}"
+  },
+  {
+    "name": "coach clients list returns data",
+    "method": "GET",
+    "path": "/api/clients",
+    "expected": "200",
+    "status": 200,
+    "pass": true,
+    "bodySnippet": "[{\"id\":\"cmpv2xk190002k31op36l0p6w\",\"email\":\"qa.student.quality@example.com\",\"password\":\"$2b$12$k9UEVfTk1lA7Y21Yhx9v9OP1LQDgY17M2E4WQxHyfKVJkQW8C9sNq\",\"name\":\"QA Quality Student\",\"role\":\"student\",\"phone\":null,\"photoUrl\":null,\"referralCode\":null,\"subscriptionStatus\":null,\"subscriptionId\":null,\"subscri..."
+  },
+  {
+    "name": "student profile update works",
+    "method": "POST",
+    "path": "/api/user/update-profile",
+    "expected": "200",
+    "status": 200,
+    "pass": true,
+    "bodySnippet": "{\"success\":true,\"user\":{\"id\":\"cmpv2xk190002k31op36l0p6w\",\"name\":\"QA Quality Student Updated\",\"email\":\"qa.student.quality@example.com\",\"phone\":null,\"gender\":null,\"age\":null,\"height\":178,\"currentWeight\":null,\"targetWeight\":null,\"healthNotes\":null,\"role\":\"student\"}}"
+  },
+  {
+    "name": "program create works",
+    "method": "POST",
+    "path": "/api/programs",
+    "expected": "201",
+    "status": 201,
+    "pass": true,
+    "bodySnippet": "{\"id\":\"cmpv2xk51000vpj01zqddgifm\",\"userId\":\"cmpv2xk190002k31op36l0p6w\",\"name\":\"QA Quality Program\",\"category\":\"Fitness\",\"startDate\":\"2026-06-01T10:42:24.948Z\",\"endDate\":null,\"status\":\"active\",\"createdAt\":\"2026-06-01T10:42:24.949Z\",\"days\":[{\"id\":\"cmpv2xk51000wpj01igngeu9v\",\"programId\":\"cmpv2xk51000vp..."
+  },
+  {
+    "name": "program update works",
+    "method": "PUT",
+    "path": "/api/programs/cmpv2xk51000vpj01zqddgifm",
+    "expected": "200",
+    "status": 200,
+    "pass": true,
+    "bodySnippet": "{\"id\":\"cmpv2xk51000vpj01zqddgifm\",\"userId\":\"cmpv2xk190002k31op36l0p6w\",\"name\":\"QA Quality Program Updated\",\"category\":\"Fitness\",\"startDate\":\"2026-06-01T10:42:24.948Z\",\"endDate\":null,\"status\":\"active\",\"createdAt\":\"2026-06-01T10:42:24.949Z\",\"days\":[{\"id\":\"cmpv2xk5t000ypj010brssxqw\",\"programId\":\"cmpv2x..."
+  },
+  {
+    "name": "program delete works",
+    "method": "DELETE",
+    "path": "/api/programs/cmpv2xk51000vpj01zqddgifm",
+    "expected": "200",
+    "status": 200,
+    "pass": true,
+    "bodySnippet": "{\"success\":true}"
+  },
+  {
+    "name": "diet create works",
+    "method": "POST",
+    "path": "/api/diet",
+    "expected": "201",
+    "status": 201,
+    "pass": true,
+    "bodySnippet": "{\"id\":\"cmpv2xk740013pj01mnvcwdrt\",\"userId\":\"cmpv2xk190002k31op36l0p6w\",\"name\":\"QA Quality Diet\",\"startDate\":\"2026-06-01T10:42:25.024Z\",\"active\":true,\"dailyCalorieTarget\":2200,\"proteinTarget\":130,\"carbsTarget\":220,\"fatTarget\":70,\"waterTarget\":3000,\"createdAt\":\"2026-06-01T10:42:25.024Z\",\"meals\":[{\"id\"..."
+  },
+  {
+    "name": "diet update works",
+    "method": "PUT",
+    "path": "/api/diet/cmpv2xk740013pj01mnvcwdrt",
+    "expected": "200",
+    "status": 200,
+    "pass": true,
+    "bodySnippet": "{\"id\":\"cmpv2xk740013pj01mnvcwdrt\",\"userId\":\"cmpv2xk190002k31op36l0p6w\",\"name\":\"QA Quality Diet Updated\",\"startDate\":\"2026-06-01T10:42:25.024Z\",\"active\":true,\"dailyCalorieTarget\":2100,\"proteinTarget\":125,\"carbsTarget\":210,\"fatTarget\":65,\"waterTarget\":3000,\"createdAt\":\"2026-06-01T10:42:25.024Z\",\"meals..."
+  },
+  {
+    "name": "diet delete works",
+    "method": "DELETE",
+    "path": "/api/diet/cmpv2xk740013pj01mnvcwdrt",
+    "expected": "200",
+    "status": 200,
+    "pass": true,
+    "bodySnippet": "{\"success\":true}"
+  },
+  {
+    "name": "student to coach messaging works",
+    "method": "POST",
+    "path": "/api/messages/cmpv2xk100000k31o6tvwouui",
+    "expected": "201",
+    "status": 201,
+    "pass": true,
+    "bodySnippet": "{\"id\":\"cmpv2xk99001bpj01karqn6li\",\"content\":\"QA quality smoke message\",\"messageType\":\"text\",\"senderId\":\"cmpv2xk190002k31op36l0p6w\",\"receiverId\":\"cmpv2xk100000k31o6tvwouui\",\"fileUrl\":null,\"fileName\":null,\"fileMimeType\":null,\"fileSize\":null,\"read\":false,\"createdAt\":\"2026-06-01T10:42:25.101Z\",\"sender\":..."
+  },
+  {
+    "name": "coach payment report works",
+    "method": "GET",
+    "path": "/api/payments/report",
+    "expected": "200",
+    "status": 200,
+    "pass": true,
+    "bodySnippet": "{\"summary\":{\"totalCount\":0,\"paidCount\":0,\"failedCount\":0,\"pendingCount\":0,\"totalRevenue\":0,\"monthRevenue\":0,\"retryCount\":0},\"topFailureReasons\":[],\"recentFailures\":[]}"
+  }
+]

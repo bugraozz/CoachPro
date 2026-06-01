@@ -1,6 +1,7 @@
 import type { APIRoute } from 'astro';
 import prisma from '../../../lib/prisma';
 import { getUserFromRequest, isCoach } from '../../../lib/auth';
+import { createNotificationAndPush } from '../../../lib/notifications';
 
 // Program detayını getir
 export const GET: APIRoute = async ({ request, params }) => {
@@ -99,6 +100,19 @@ export const PUT: APIRoute = async ({ request, params }) => {
       },
     },
   });
+
+  try {
+    await createNotificationAndPush({
+      userId: updated.userId,
+      actorId: user.id,
+      type: 'program',
+      title: 'Program güncellendi',
+      body: updated.name,
+      payload: { programId: updated.id },
+    });
+  } catch (err) {
+    console.error('Notification create error:', err);
+  }
 
   return new Response(JSON.stringify(updated), {
     status: 200,

@@ -1,6 +1,8 @@
-﻿import type { APIRoute } from 'astro';
+import type { APIRoute } from 'astro';
 import prisma from '../../../lib/prisma';
+import { createNotificationAndPush } from '../../../lib/notifications';
 import { getUserFromRequest } from '../../../lib/auth';
+import redis from '../../../lib/redis';
 import { mkdir, writeFile } from 'fs/promises';
 import { randomUUID } from 'crypto';
 import { extname, join } from 'path';
@@ -41,6 +43,15 @@ function jsonResponse(payload: unknown, status = 200) {
     status,
     headers: { 'Content-Type': 'application/json' }
   });
+}
+
+async function publishMessage(message: any) {
+  try {
+    const channel = `chat:${message.receiverId}`;
+    await redis.publish(channel, JSON.stringify(message));
+  } catch (err) {
+    console.error('Redis publish error:', err);
+  }
 }
 
 function sanitizeFileName(name: string) {
@@ -114,6 +125,19 @@ async function createAttachmentMessage(userId: string, otherUserId: string, form
     select: messageSelect
   });
 
+  await publishMessage(message);
+  try {
+    await createNotificationAndPush({
+      userId: otherUserId,
+      actorId: userId,
+      type: 'message',
+      title: 'Yeni mesaj',
+      body: rawContent || (message.fileName ? `Dosya: ${message.fileName}` : null),
+      payload: { messageId: message.id },
+    });
+  } catch (err) {
+    console.error('Notification create error:', err);
+  }
   return jsonResponse(message, 201);
 }
 
@@ -185,6 +209,19 @@ export const POST: APIRoute = async ({ request, params }) => {
       select: messageSelect
     });
 
+    await publishMessage(msg);
+    try {
+      await createNotificationAndPush({
+        userId: otherUserId,
+        actorId: user.id,
+        type: 'message',
+        title: 'Yeni mesaj',
+        body: rawContent || null,
+        payload: { messageId: msg.id },
+      });
+    } catch (err) {
+      console.error('Notification create error:', err);
+    }
     return jsonResponse(msg, 201);
   } catch (error) {
     console.error('Message creation error:', error);

@@ -1,0 +1,16 @@
+services:
+  web:
+    environment:
+      # Must be set from CI/CD or host environment in production
+      PUBLIC_APP_URL: ${PUBLIC_APP_URL:?PUBLIC_APP_URL is required}
+      IYZICO_MOCK_MODE: "0"
+
+      # Keep sensitive values out of git: pass via deployment secrets/env
+      IYZICO_WEBHOOK_SECRET: ${IYZICO_WEBHOOK_SECRET:-}
+      IYZICO_WEBHOOK_TRUSTED_IPS_FILE: /run/secrets/iyzico_webhook_trusted_ips
+    secrets:
+      - iyzico_webhook_trusted_ips
+
+secrets:
+  iyzico_webhook_trusted_ips:
+    file: ./secrets/iyzico_webhook_trusted_ips.txt

@@ -1,17 +1,82 @@
 ---
 import { getUserFromRequest, isBackofficeUser } from '../lib/auth';
-import { calculateDiscountedAmount, getGlobalCoachSubscriptionDiscount } from '../lib/pricing';
+import {
+  calculateDiscountedAmount,
+  getCoachSubscriptionPlanDiscounts,
+  getCoachSubscriptionPlans,
+  getGlobalCoachSubscriptionDiscount,
+  resolveCoachSubscriptionDiscountAmount,
+} from '../lib/pricing';
+import { getHomeTextOverrides } from '../lib/site-content';
 import BorderGlow from '../components/BorderGlow';
 import ShapeGrid from '../components/ShapeGrid';
+import PublicLayout from '../layouts/PublicLayout.astro';
 
-const COACH_SUBSCRIPTION_PRICE_TRY = 299;
+const DEFAULT_MONTHLY_PRICE_TRY = 299;
+const DEFAULT_YEARLY_PRICE_TRY = 2990;
 
 const user = await getUserFromRequest(Astro.request);
-const globalCoachDiscount = await getGlobalCoachSubscriptionDiscount();
-const coachPricing = calculateDiscountedAmount(
-  COACH_SUBSCRIPTION_PRICE_TRY,
-  globalCoachDiscount.enabled ? globalCoachDiscount.amount : 0,
+const [globalCoachDiscount, coachPlanDiscounts, coachPlans, homeTextOverrides] = await Promise.all([
+  getGlobalCoachSubscriptionDiscount(),
+  getCoachSubscriptionPlanDiscounts(),
+  getCoachSubscriptionPlans(),
+  getHomeTextOverrides(),
+]);
+
+const coachMonthlyPlan =
+  coachPlans.find((plan) => plan.id === 'monthly') ||
+  coachPlans[0] ||
+  {
+    id: 'monthly',
+    label: 'Aylik Plan',
+    months: 1,
+    price: DEFAULT_MONTHLY_PRICE_TRY,
+    description: 'Aylik yenilenen esnek egitmen plani',
+    recommended: false,
+  };
+
+const coachYearlyPlan =
+  coachPlans.find((plan) => plan.id === 'yearly') ||
+  coachPlans.find((plan) => plan.id !== coachMonthlyPlan.id) ||
+  {
+    id: 'yearly',
+    label: 'Yillik Plan',
+    months: 12,
+    price: DEFAULT_YEARLY_PRICE_TRY,
+    description: '12 ay erisim saglayan yillik egitmen plani',
+    recommended: true,
+  };
+
+const monthlyDiscountAmount = resolveCoachSubscriptionDiscountAmount({
+  planId: coachMonthlyPlan.id,
+  planDiscounts: coachPlanDiscounts,
+  globalDiscount: globalCoachDiscount,
+});
+
+const yearlyDiscountAmount = resolveCoachSubscriptionDiscountAmount({
+  planId: coachYearlyPlan.id,
+  planDiscounts: coachPlanDiscounts,
+  globalDiscount: globalCoachDiscount,
+});
+
+const coachMonthlyPricing = calculateDiscountedAmount(coachMonthlyPlan.price, monthlyDiscountAmount);
+const coachYearlyPricing = calculateDiscountedAmount(coachYearlyPlan.price, yearlyDiscountAmount);
+
+const yearlyMonthlyEquivalent = Math.max(1, Math.round(coachYearlyPricing.finalAmount / 12));
+const yearlySavingsComparedToMonthly = Math.max(
+  0,
+  coachMonthlyPricing.finalAmount * 12 - coachYearlyPricing.finalAmount,
 );
+
+const homeText = (key: string, fallback: string): string => {
+  const value = homeTextOverrides[key];
+  if (typeof value !== 'string') {
+    return fallback;
+  }
+
+  const normalized = value.trim();
+  return normalized || fallback;
+};
 
 // Giriş yapmışsa dashboard'a yönlendir
 if (user) {
@@ -22,15 +87,12 @@ if (user) {
 }
 ---
 
-<html lang="tr">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="description" content="CoachPro - Kişisel antrenörler için müşteri takip ve vücut analizi platformu" />
-  <title>CoachPro - Fitness Koçluk Platformu</title>
-  <link rel="stylesheet" href="/src/styles/global.css" />
-</head>
-<body class="min-h-screen relative bg-white" style="background-color: #ffffff;">
+<PublicLayout
+  title="CoachPro - Fitness Koçluk Platformu"
+  description="CoachPro - Kişisel antrenörler için müşteri takip ve vücut analizi platformu"
+  bodyClass="min-h-screen relative bg-white"
+  bodyStyle="background-color: #ffffff;"
+>
   <!-- Subtle ShapeGrid Background -->
   <div class="fixed inset-0 z-0 bg-white pointer-events-none opacity-10">
     <ShapeGrid
@@ -66,31 +128,31 @@ if (user) {
     <div class="max-w-7xl mx-auto text-center">
       <div class="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-accent-primary/10 border border-accent-primary/20 text-accent-primary text-sm font-medium mb-8">
         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/></svg>
-        Türkiye'nin #1 Fitness Koçluk Platformu
+        {homeText('home.hero.badge', "Turkiye'nin #1 Fitness Kocluk Platformu")}
       </div>
       
       <h1 class="text-4xl sm:text-5xl lg:text-6xl font-bold text-gray-900 mb-6 leading-tight">
-        Öğrencilerinizi 
+        {homeText('home.hero.title.main', 'Ogrencilerinizi')}
         <span class="relative inline-block whitespace-nowrap">
-          <span class="relative z-10 text-red-500">Profesyonelce</span>
+          <span class="relative z-10 text-red-500">{homeText('home.hero.title.highlight', 'Profesyonelce')}</span>
           <svg class="absolute -bottom-2 left-0 w-full h-3 sm:h-4 -rotate-1 text-red-500" viewBox="0 0 100 20" preserveAspectRatio="none" aria-hidden="true">
             <path d="M 2,12 Q 25,26 99,5" stroke="currentColor" stroke-width="7" stroke-linecap="round" fill="none" />
           </svg>
         </span> 
-        Yönetin
+        Yonetin
       </h1>
       
       <p class="text-lg text-gray-600 max-w-2xl mx-auto mb-10">
-        Antrenman programları, diyet planları, vücut analizi ve gelişim takibi - tüm koçluk araçlarınız tek platformda.
+        {homeText('home.hero.subtitle', 'Antrenman programlari, diyet planlari, vucut analizi ve gelisim takibi - tum kocluk araclariniz tek platformda.')}
       </p>
       
       <div class="flex flex-col sm:flex-row items-center justify-center gap-4 mb-16">
         <a href="/auth/register" class="btn-primary text-base px-8 py-4">
           <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg>
-          Eğitmen Olarak Başla
+          {homeText('home.hero.coachCta', 'Egitmen Olarak Basla')}
         </a>
         <a href="/auth/register" class="inline-flex items-center gap-2 px-8 py-4 rounded-lg font-semibold text-base bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 transition-all">
-          Öğrenci Olarak Katıl
+          {homeText('home.hero.studentCta', 'Ogrenci Olarak Katil')}
         </a>
       </div>
 
@@ -391,60 +453,63 @@ if (user) {
   <section class="py-20 px-6 relative z-10">
     <div class="max-w-3xl mx-auto">
       <div class="text-center mb-16">
-        <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-red-50 border border-red-200 text-red-600 text-xs font-medium mb-4">SSS</div>
-        <h2 class="text-4xl font-bold text-gray-900 mb-4">Sıkça Sorulan Sorular</h2>
+        <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-red-50 border border-red-200 text-red-600 text-xs font-medium mb-4">{homeText('faq.page.badge', 'SSS')}</div>
+        <h2 class="text-4xl font-bold text-gray-900 mb-4">{homeText('faq.page.title', 'Sikca Sorulan Sorular')}</h2>
       </div>
 
       <div class="space-y-4">
         <details class="group bg-white/80 backdrop-blur-sm rounded-xl border border-gray-200 overflow-hidden">
           <summary class="flex items-center justify-between p-6 cursor-pointer hover:bg-gray-50 transition-colors">
-            <span class="font-semibold text-gray-900">CoachPro nedir ve kimler için?</span>
+            <span class="font-semibold text-gray-900">{homeText('faq.q1.question', 'CoachPro nedir ve kimler icin?')}</span>
             <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-gray-400 group-open:rotate-180 transition-transform"><path d="m6 9 6 6 6-6"/></svg>
           </summary>
           <div class="px-6 pb-6 text-gray-600 text-sm leading-relaxed">
-            CoachPro, kişisel antrenörler (eğitmenler) ve öğrencileri için tasarlanmış bir fitness koçluk platformudur. Eğitmenler antrenman programları ve diyet planları oluşturabilir, öğrencilerini yönetebilir ve AI destekli vücut analizi yapabilir. Öğrenciler ise eğitmenlerinin hazırladığı programlara erişebilir ve gelişimlerini takip edebilir.
+            {homeText('faq.q1.answer', 'CoachPro, kisisel antrenorler ve ogrencileri icin tasarlanmis bir fitness kocluluk platformudur. Egitmenler program olusturabilir, ogrencilerini yonetebilir ve AI destekli analiz yapabilir.')}
           </div>
         </details>
 
         <details class="group bg-white/80 backdrop-blur-sm rounded-xl border border-gray-200 overflow-hidden">
           <summary class="flex items-center justify-between p-6 cursor-pointer hover:bg-gray-50 transition-colors">
-            <span class="font-semibold text-gray-900">Referans kodu sistemi nasıl çalışır?</span>
+            <span class="font-semibold text-gray-900">{homeText('faq.q2.question', 'Referans kodu sistemi nasil calisir?')}</span>
             <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-gray-400 group-open:rotate-180 transition-transform"><path d="m6 9 6 6 6-6"/></svg>
           </summary>
           <div class="px-6 pb-6 text-gray-600 text-sm leading-relaxed">
-            Her eğitmen hesap oluşturduğunda benzersiz bir referans kodu alır. Öğrenciler kayıt olurken bu kodu girerek eğitmenleriyle otomatik eşleşir. Böylece eğitmen anında öğrencisini görüp program atamaya başlayabilir.
+            {homeText('faq.q2.answer', 'Her egitmen hesap olusturdugunda benzersiz bir referans kodu alir. Ogrenciler kayit olurken bu kodu girerek egitmenleriyle otomatik eslesir.')}
           </div>
         </details>
 
         <details class="group bg-white/80 backdrop-blur-sm rounded-xl border border-gray-200 overflow-hidden">
           <summary class="flex items-center justify-between p-6 cursor-pointer hover:bg-gray-50 transition-colors">
-            <span class="font-semibold text-gray-900">AI vücut analizi nasıl yapılıyor?</span>
+            <span class="font-semibold text-gray-900">{homeText('faq.q3.question', 'AI vucut analizi nasil yapiliyor?')}</span>
             <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-gray-400 group-open:rotate-180 transition-transform"><path d="m6 9 6 6 6-6"/></svg>
           </summary>
           <div class="px-6 pb-6 text-gray-600 text-sm leading-relaxed">
-            Google MediaPipe teknolojisini kullanarak yüklediğiniz fotoğraflar üzerinde 33 eklem noktası tespit edilir. Bu noktalar kullanılarak postür değerlendirmesi, vücut oranları hesaplaması ve duruş analizi otomatik olarak yapılır. Sonuçlar görsel olarak sunulur.
+            {homeText('faq.q3.answer', 'Google MediaPipe teknolojisi ile yuklenen fotograflarda 33 eklem noktasi tespit edilir. Bu verilerle postur degerlendirmesi ve vucut orani analizi otomatik yapilir.')}
           </div>
         </details>
 
         <details class="group bg-white/80 backdrop-blur-sm rounded-xl border border-gray-200 overflow-hidden">
           <summary class="flex items-center justify-between p-6 cursor-pointer hover:bg-gray-50 transition-colors">
-            <span class="font-semibold text-gray-900">Öğrenciler için ücret var mı?</span>
+            <span class="font-semibold text-gray-900">{homeText('faq.q4.question', 'Ogrenciler icin ucret var mi?')}</span>
             <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-gray-400 group-open:rotate-180 transition-transform"><path d="m6 9 6 6 6-6"/></svg>
           </summary>
           <div class="px-6 pb-6 text-gray-600 text-sm leading-relaxed">
-            Hayır! Öğrenciler tamamen ücretsiz olarak platforma katılabilir. Eğitmenlerinin programlarına erişim, diyet planlarını görüntüleme ve gelişim takibi gibi tüm özellikler öğrenciler için ücretsizdir.
+            {homeText('faq.q4.answer', 'Hayir. Ogrenciler platforma ucretsiz katilabilir ve egitmenlerinin verdigi programlara erisebilir.')}
           </div>
         </details>
 
         <details class="group bg-white/80 backdrop-blur-sm rounded-xl border border-gray-200 overflow-hidden">
           <summary class="flex items-center justify-between p-6 cursor-pointer hover:bg-gray-50 transition-colors">
-            <span class="font-semibold text-gray-900">Kaç öğrenci ekleyebilirim?</span>
+            <span class="font-semibold text-gray-900">{homeText('faq.q5.question', 'Kac ogrenci ekleyebilirim?')}</span>
             <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-gray-400 group-open:rotate-180 transition-transform"><path d="m6 9 6 6 6-6"/></svg>
           </summary>
           <div class="px-6 pb-6 text-gray-600 text-sm leading-relaxed">
-            Eğitmen planında sınırsız öğrenci ekleyebilirsiniz. Tüm öğrencilerinize ayrı ayrı program ve diyet planı atayabilir, her birinin gelişimini ayrıntılı takip edebilirsiniz.
+            {homeText('faq.q5.answer', 'Egitmen planinda sinirsiz ogrenci ekleyebilirsiniz. Her ogrenciye ayri program ve diyet atayabilirsiniz.')}
           </div>
         </details>
+      </div>
+      <div class="text-center mt-8">
+        <a href="/faq" class="text-sm font-medium text-red-600 hover:text-red-700 transition-colors">Tum SSS sayfasini gor</a>
       </div>
     </div>
   </section>
@@ -455,15 +520,15 @@ if (user) {
       <div class="bg-linear-to-br from-gray-900 to-gray-800 rounded-3xl p-12 md:p-16 relative overflow-hidden">
         <div class="absolute inset-0 bg-[radial-gradient(circle_at_30%_50%,rgba(239,68,68,0.15),transparent_60%)]"></div>
         <div class="relative z-10">
-          <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">Koçluk Kariyerinizi Dijitalleştirin</h2>
-          <p class="text-gray-400 max-w-lg mx-auto mb-8">Binlerce eğitmen CoachPro ile öğrencilerini yönetiyor. Siz de hemen başlayın, ilk ay ücretsiz deneyin.</p>
+          <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">{homeText('home.cta.title', 'Kocluk Kariyerinizi Dijitallestirin')}</h2>
+          <p class="text-gray-400 max-w-lg mx-auto mb-8">{homeText('home.cta.subtitle', 'Binlerce egitmen CoachPro ile ogrencilerini yonetiyor. Siz de hemen baslayin.')}</p>
           <div class="flex flex-col sm:flex-row items-center justify-center gap-4">
             <a href="/auth/register" class="inline-flex items-center gap-2 px-8 py-4 rounded-lg font-semibold text-base bg-red-600 text-white  transition-all">
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
-              Hemen Başla
+              {homeText('home.cta.primary', 'Hemen Basla')}
             </a>
             <a href="#pricing" class="inline-flex items-center gap-2 px-8 py-4 rounded-lg font-semibold text-base bg-white/10 text-white border border-white/20 hover:bg-white/20 transition-all">
-              Fiyatları İncele
+              {homeText('home.cta.secondary', 'Fiyatlari Incele')}
             </a>
           </div>
         </div>
@@ -472,80 +537,154 @@ if (user) {
   </section>
 
   <!-- Pricing Section -->
-  <section id="pricing" class="py-20 px-6 relative z-10">
-    <div class="max-w-7xl mx-auto">
-      <div class="text-center mb-16">
-        <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-red-50 border border-red-200 text-red-600 text-xs font-medium mb-4">FİYATLANDIRMA</div>
-        <h2 class="text-4xl font-bold text-gray-900 mb-4">Basit Fiyatlandırma</h2>
-        <p class="text-gray-600">Öğrenciler için ücretsiz, eğitmenler için uygun fiyat</p>
+  <section id="pricing" class="py-24 px-6 relative z-10 bg-[linear-gradient(180deg,rgba(248,250,252,0.75),rgba(255,255,255,1))]">
+    <div class="max-w-6xl mx-auto">
+      <div class="text-center mb-14">
+        <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-red-50 border border-red-200 text-red-600 text-xs font-semibold mb-4">{homeText('home.pricing.badge', 'FIYATLANDIRMA')}</div>
+        <h2 class="text-4xl md:text-5xl font-bold tracking-tight text-gray-900 mb-4">{homeText('home.pricing.title', 'Kocluk Icin Profesyonel Fiyatlandirma')}</h2>
+        <p class="text-gray-600 max-w-2xl mx-auto">{homeText('home.pricing.subtitle', 'Seffaf ucretlendirme, guclu ozellikler ve sade bir abonelik modeli.')}</p>
       </div>
-      
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-4xl mx-auto">
-        <!-- Student Plan -->
-        <div class="bg-white rounded-2xl border border-gray-200 p-8 shadow-sm hover:shadow-lg transition-shadow">
-          <div class="text-center mb-6">
-            <h3 class="text-xl font-bold text-gray-900 mb-2">Öğrenci</h3>
-            <div class="text-4xl font-bold text-cyan-600">Ücretsiz</div>
+
+      <div class="rounded-3xl border border-slate-200/90 bg-white p-4 md:p-6 shadow-[0_28px_70px_-50px_rgba(15,23,42,0.5)]">
+        <div class="grid grid-cols-1 lg:grid-cols-[1fr_1.08fr] gap-6">
+          <!-- Student Plan -->
+          <div class="rounded-2xl border border-slate-200 bg-slate-50/70 p-8 flex flex-col transition-all duration-300 hover:shadow-md">
+            <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white border border-slate-200 text-slate-700 text-xs font-semibold w-fit mb-6">
+              {homeText('home.pricing.studentPlan.title', 'Ogrenci Plani')}
+            </div>
+
+            <h3 class="text-2xl font-bold text-gray-900 mb-3">{homeText('home.pricing.studentPlan.title', 'Ogrenci Plani')}</h3>
+            <div class="mb-5 flex items-end gap-2">
+              <span class="text-5xl font-extrabold text-gray-900">₺0</span>
+              <span class="text-gray-500 mb-1">/ay</span>
+            </div>
+            <p class="text-sm text-gray-500 mb-2">{homeText('home.pricing.studentPlan.description', 'Egitmeninle calisirken platformun tum ogrenci tarafi araclari acik kalir.')}</p>
+            <p class="text-xs text-slate-400 mb-7">{homeText('home.pricing.studentPlan.note', 'Kredi karti gerektirmez.')}</p>
+
+            <ul class="space-y-3 text-gray-700 mb-8">
+              <li class="flex items-start gap-3">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-emerald-500 shrink-0 mt-0.5"><polyline points="20 6 9 17 4 12"/></svg>
+                Eğitmenin programlarına erişim
+              </li>
+              <li class="flex items-start gap-3">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-emerald-500 shrink-0 mt-0.5"><polyline points="20 6 9 17 4 12"/></svg>
+                Diyet planlarını görüntüleme
+              </li>
+              <li class="flex items-start gap-3">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-emerald-500 shrink-0 mt-0.5"><polyline points="20 6 9 17 4 12"/></svg>
+                Ölçüm, kilo ve gelişim takibi
+              </li>
+              <li class="flex items-start gap-3">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-emerald-500 shrink-0 mt-0.5"><polyline points="20 6 9 17 4 12"/></svg>
+                AI analiz raporlarını görüntüleme
+              </li>
+            </ul>
+
+            <a href="/auth/register" class="inline-flex items-center justify-center w-full px-6 py-3.5 rounded-xl font-semibold border border-slate-300 text-slate-700 hover:bg-slate-100 transition-all mt-auto">{homeText('home.pricing.studentPlan.cta', 'Ogrenci Olarak Katil')}</a>
           </div>
-          <ul class="space-y-3 mb-8">
-            <li class="flex items-center gap-3 text-gray-600">
-              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-green-500 shrink-0"><polyline points="20 6 9 17 4 12"/></svg>
-              Eğitmenin programlarına erişim
-            </li>
-            <li class="flex items-center gap-3 text-gray-600">
-              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-green-500 shrink-0"><polyline points="20 6 9 17 4 12"/></svg>
-              Diyet planlarını görüntüleme
-            </li>
-            <li class="flex items-center gap-3 text-gray-600">
-              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-green-500 shrink-0"><polyline points="20 6 9 17 4 12"/></svg>
-              Gelişim takibi
-            </li>
-          </ul>
-          <a href="/auth/register" class="inline-flex items-center justify-center w-full px-6 py-3 rounded-lg font-semibold bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 transition-all">Öğrenci Ol</a>
-        </div>
-        
-        <!-- Coach Plan -->
-        <div class="bg-white rounded-2xl border-2 border-red-500 p-8 shadow-lg relative">
-          <div class="absolute -top-3 left-1/2 -translate-x-1/2 px-4 py-1 bg-red-500 text-white text-xs font-bold rounded-full">
-            EN POPÜLER
-          </div>
-          <div class="text-center mb-6">
-            <h3 class="text-xl font-bold text-gray-900 mb-2">Eğitmen</h3>
-            {coachPricing.discountAmount > 0 ? (
-              <div>
-                <div class="text-sm text-gray-400 line-through">₺{coachPricing.baseAmount}/ay</div>
-                <div class="text-4xl font-bold text-red-600">₺{coachPricing.finalAmount}<span class="text-lg font-normal text-gray-500">/ay</span></div>
-                <div class="mt-2 inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold bg-green-100 text-green-700">
-                  Admin indirimi aktif: -₺{coachPricing.discountAmount}
+
+          <!-- Coach Plan -->
+          <div class="rounded-2xl border-2 border-red-500 bg-white p-8 flex flex-col relative overflow-hidden transition-all duration-300 hover:shadow-lg">
+            <div class="absolute inset-x-0 top-0 h-28 bg-linear-to-b from-red-50 to-transparent pointer-events-none"></div>
+            <div class="relative z-10">
+              <div class="flex items-center justify-between mb-6">
+                <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-red-100 text-red-700 text-xs font-semibold">
+                  {homeText('home.pricing.coachPlan.badge', 'Egitmen Plani')}
                 </div>
+                <div class="px-3 py-1 rounded-full bg-gray-900 text-white text-[11px] font-bold tracking-wide">EN POPÜLER</div>
               </div>
-            ) : (
-              <div class="text-4xl font-bold text-red-600">₺{coachPricing.finalAmount}<span class="text-lg font-normal text-gray-500">/ay</span></div>
-            )}
+
+              <h3 class="text-2xl font-bold text-gray-900 mb-3">{homeText('home.pricing.coachPlan.title', 'Egitmen')}</h3>
+              <div class="mb-5 space-y-3">
+                <div class="rounded-xl border border-slate-200 bg-white p-4">
+                  <div class="flex items-center justify-between gap-4">
+                    <div>
+                      <p class="text-sm font-semibold text-gray-900">{coachMonthlyPlan.label}</p>
+                      <p class="text-xs text-gray-500">{coachMonthlyPlan.description}</p>
+                    </div>
+                    <div class="text-right">
+                      {coachMonthlyPricing.discountAmount > 0 && (
+                        <div class="text-xs text-gray-400 line-through">₺{coachMonthlyPricing.baseAmount}/ay</div>
+                      )}
+                      <div class="text-2xl font-extrabold text-red-600 leading-none">
+                        ₺{coachMonthlyPricing.finalAmount}
+                        <span class="text-sm font-semibold text-gray-500 ml-1">/ay</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="rounded-xl border-2 border-red-300 bg-red-50/60 p-4">
+                  <div class="flex items-center justify-between gap-4">
+                    <div>
+                      <p class="text-sm font-semibold text-gray-900">{coachYearlyPlan.label}</p>
+                      <p class="text-xs text-gray-500">{coachYearlyPlan.description}</p>
+                    </div>
+                    <div class="text-right">
+                      {coachYearlyPricing.discountAmount > 0 && (
+                        <div class="text-xs text-gray-400 line-through">₺{coachYearlyPricing.baseAmount}/yil</div>
+                      )}
+                      <div class="text-2xl font-extrabold text-red-600 leading-none">
+                        ₺{coachYearlyPricing.finalAmount}
+                        <span class="text-sm font-semibold text-gray-500 ml-1">/yil</span>
+                      </div>
+                      <div class="text-xs text-gray-500 mt-1">Ayliga denk: ₺{yearlyMonthlyEquivalent}</div>
+                    </div>
+                  </div>
+                </div>
+
+                {coachMonthlyPricing.discountAmount > 0 && (
+                  <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-700 border border-emerald-200">
+                    Admin indirimi aktif: plan basi -₺{coachMonthlyPricing.discountAmount}
+                  </div>
+                )}
+
+                {yearlySavingsComparedToMonthly > 0 && (
+                  <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold bg-red-100 text-red-700 border border-red-200">
+                    Yillik secimde toplam ₺{yearlySavingsComparedToMonthly} avantaj
+                  </div>
+                )}
+              </div>
+              <p class="text-sm text-gray-500 mb-2">{homeText('home.pricing.coachPlan.description', 'Aylik ve yillik seceneklerle tum kocluk araclarina erisin.')}</p>
+              <p class="text-xs text-slate-400 mb-7">{homeText('home.pricing.coachPlan.note', 'Kurumsal odeme kaydi ve takip uyumlu.')}</p>
+
+              <ul class="space-y-3 text-gray-700 mb-8">
+                <li class="flex items-start gap-3">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-emerald-500 shrink-0 mt-0.5"><polyline points="20 6 9 17 4 12"/></svg>
+                  Sınırsız öğrenci ve merkezi yönetim paneli
+                </li>
+                <li class="flex items-start gap-3">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-emerald-500 shrink-0 mt-0.5"><polyline points="20 6 9 17 4 12"/></svg>
+                  Program ve diyet oluşturma + atama
+                </li>
+                <li class="flex items-start gap-3">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-emerald-500 shrink-0 mt-0.5"><polyline points="20 6 9 17 4 12"/></svg>
+                  AI vücut analizi ve raporlama
+                </li>
+                <li class="flex items-start gap-3">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-emerald-500 shrink-0 mt-0.5"><polyline points="20 6 9 17 4 12"/></svg>
+                  Referans kodu sistemi ve öncelikli destek
+                </li>
+              </ul>
+
+              <a href="/auth/register" class="btn-primary w-full justify-center py-3.5 text-base">{homeText('home.pricing.coachPlan.cta', 'Egitmen Olarak Basla')}</a>
+            </div>
           </div>
-          <ul class="space-y-3 mb-8">
-            <li class="flex items-center gap-3 text-gray-600">
-              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-green-500 shrink-0"><polyline points="20 6 9 17 4 12"/></svg>
-              Sınırsız öğrenci
-            </li>
-            <li class="flex items-center gap-3 text-gray-600">
-              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-green-500 shrink-0"><polyline points="20 6 9 17 4 12"/></svg>
-              Program ve diyet oluşturma
-            </li>
-            <li class="flex items-center gap-3 text-gray-600">
-              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-green-500 shrink-0"><polyline points="20 6 9 17 4 12"/></svg>
-              AI vücut analizi
-            </li>
-            <li class="flex items-center gap-3 text-gray-600">
-              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-green-500 shrink-0"><polyline points="20 6 9 17 4 12"/></svg>
-              Referans kodu sistemi
-            </li>
-            <li class="flex items-center gap-3 text-gray-600">
-              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-green-500 shrink-0"><polyline points="20 6 9 17 4 12"/></svg>
-              Öncelikli destek
-            </li>
-          </ul>
-          <a href="/auth/register" class="btn-primary w-full justify-center">Eğitmen Ol</a>
+        </div>
+
+        <div class="mt-5 grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div class="rounded-xl border border-slate-200 bg-white p-4">
+            <p class="text-xs text-slate-500 uppercase tracking-wider mb-1">{homeText('home.pricing.meta.paymentTitle', 'Odeme')}</p>
+            <p class="text-sm font-semibold text-slate-900">Guvenli kart altyapisi</p>
+          </div>
+          <div class="rounded-xl border border-slate-200 bg-white p-4">
+            <p class="text-xs text-slate-500 uppercase tracking-wider mb-1">{homeText('home.pricing.meta.commitmentTitle', 'Taahhut')}</p>
+            <p class="text-sm font-semibold text-slate-900">Aylik veya yillik secim ozgurlugu</p>
+          </div>
+          <div class="rounded-xl border border-slate-200 bg-white p-4">
+            <p class="text-xs text-slate-500 uppercase tracking-wider mb-1">{homeText('home.pricing.meta.setupTitle', 'Kurulum')}</p>
+            <p class="text-sm font-semibold text-slate-900">Kayitla birlikte aninda aktif</p>
+          </div>
         </div>
       </div>
     </div>
@@ -558,15 +697,14 @@ if (user) {
           <div class="w-8 h-8 rounded-lg bg-linear-to-br from-red-500 to-red-500 flex items-center justify-center text-white text-sm font-bold">
             CP
           </div>
-          <span class="text-gray-500 text-sm">© 2024 CoachPro. Tüm hakları saklıdır.</span>
+          <span class="text-gray-500 text-sm">{homeText('footer.copyright', '© 2024 CoachPro. Tum haklari saklidir.')}</span>
         </div>
         <div class="flex items-center gap-6 text-sm text-gray-500">
-          <a href="#" class="hover:text-gray-900 transition-colors">Gizlilik</a>
-          <a href="#" class="hover:text-gray-900 transition-colors">Kullanım Şartları</a>
-          <a href="#" class="hover:text-gray-900 transition-colors">İletişim</a>
+          <a href="/privacy" class="hover:text-gray-900 transition-colors">{homeText('footer.link.privacy', 'Gizlilik')}</a>
+          <a href="/terms" class="hover:text-gray-900 transition-colors">{homeText('footer.link.terms', 'Kullanim Sartlari')}</a>
+          <a href="/contact" class="hover:text-gray-900 transition-colors">{homeText('footer.link.contact', 'Iletisim')}</a>
         </div>
       </div>
     </footer>
-</body>
-</html>
+</PublicLayout>
 

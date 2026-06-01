@@ -1,6 +1,7 @@
 import type { APIRoute } from 'astro';
 import prisma from '../../../lib/prisma';
 import { getUserFromRequest, isCoach } from '../../../lib/auth';
+import { createNotificationAndPush } from '../../../lib/notifications';
 
 export const POST: APIRoute = async ({ request }) => {
   const user = await getUserFromRequest(request);
@@ -61,6 +62,19 @@ export const POST: APIRoute = async ({ request }) => {
       },
     },
   });
+
+  try {
+    await createNotificationAndPush({
+      userId: student.id,
+      actorId: user.id,
+      type: 'diet',
+      title: 'Yeni diyet',
+      body: String(data.name).trim(),
+      payload: { dietId: dietPlan.id },
+    });
+  } catch (err) {
+    console.error('Notification create error:', err);
+  }
 
   return new Response(JSON.stringify(dietPlan), {
     status: 201,

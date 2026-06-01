@@ -1,6 +1,6 @@
 ﻿---
 import MainLayout from '../../layouts/MainLayout.astro';
-import { getUserFromRequest } from '../../lib/auth';
+import { getUserFromRequest, isCoach, isStudent } from '../../lib/auth';
 import prisma from '../../lib/prisma';
 import ChatInterface from '../../components/ChatInterface';
 
@@ -10,10 +10,28 @@ if (!user) return Astro.redirect('/auth/login');
 const { id } = Astro.params;
 if (!id) return Astro.redirect('/messages');
 
-const otherUser = await prisma.user.findUnique({
-  where: { id },
-  select: { id: true, name: true, photoUrl: true, role: true }
-});
+let otherUser: { id: string; name: string; photoUrl: string | null; role: string } | null = null;
+
+if (isCoach(user)) {
+  otherUser = await prisma.user.findFirst({
+    where: {
+      id,
+      role: 'student',
+      coachId: user.id,
+    },
+    select: { id: true, name: true, photoUrl: true, role: true }
+  });
+} else if (isStudent(user)) {
+  if (user.coachId === id) {
+    otherUser = await prisma.user.findFirst({
+      where: {
+        id,
+        role: 'coach',
+      },
+      select: { id: true, name: true, photoUrl: true, role: true }
+    });
+  }
+}
 
 if (!otherUser) {
   return Astro.redirect('/messages');

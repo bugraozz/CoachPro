@@ -110,6 +110,23 @@ export function validateCoachPayoutInput(input: {
   return null;
 }
 
+function extractSubMerchantStatus(source: unknown): string | null {
+  if (!source || typeof source !== 'object') {
+    return null;
+  }
+
+  const map = source as Record<string, unknown>;
+  const candidates = [map.subMerchantStatus, map.status];
+
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+
+  return null;
+}
+
 export async function syncCoachSubMerchant(input: CoachPayoutSyncInput): Promise<CoachPayoutSyncResult> {
   const { firstName, lastName } = splitFullName(input.fullName);
   const subMerchantExternalId = input.existingExternalId || `coach_${input.coachId}`;
@@ -167,9 +184,10 @@ export async function syncCoachSubMerchant(input: CoachPayoutSyncInput): Promise
     subMerchantExternalId,
   }).catch(() => null);
 
-  const subMerchantStatus = retrieved && typeof retrieved === 'object'
-    ? String((retrieved as Record<string, unknown>).status || 'success')
-    : 'success';
+  const subMerchantStatus =
+    extractSubMerchantStatus(retrieved) ||
+    extractSubMerchantStatus(response) ||
+    'active';
 
   return {
     ok: true,

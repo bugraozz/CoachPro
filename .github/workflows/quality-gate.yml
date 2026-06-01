@@ -1,0 +1,85 @@
+name: Quality Gate
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  quality-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          npm --prefix astro-app ci
+
+      - name: Start stack (mock IyziCo enabled)
+        env:
+          IYZICO_MOCK_MODE: "1"
+          PAYMENT_LINK_SECRET: "quality-gate-payment-secret"
+        run: docker compose -f docker-compose.yml up -d --build
+
+      - name: Wait for web health
+        shell: bash
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 90); do
+            if curl -fsS http://localhost:4321/api/analysis/health >/dev/null; then
+              echo "Web is healthy"
+              exit 0
+            fi
+            echo "Waiting for web... ($i/90)"
+            sleep 3
+          done
+          echo "Web health check timed out"
+          exit 1
+
+      - name: Run quality smoke
+        env:
+          QUALITY_SMOKE_BASE_URL: http://localhost:4321
+          QUALITY_SMOKE_ORIGIN: http://localhost:4321
+        run: npm run quality:smoke
+
+      - name: Run payments contract E2E
+        env:
+          PAYMENTS_CONTRACT_BASE_URL: http://localhost:4321
+          PAYMENTS_CONTRACT_ORIGIN: http://localhost:4321
+          PAYMENTS_CONTRACT_PAYMENT_SECRET: quality-gate-payment-secret
+        run: npm run payments:contract
+
+      - name: Upload quality smoke artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quality-smoke-results
+          path: quality-smoke-results.json
+          if-no-files-found: warn
+
+      - name: Upload payments contract artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: payments-contract-e2e-results
+          path: payments-contract-e2e-results.json
+          if-no-files-found: warn
+
+      - name: Web logs on failure
+        if: failure()
+        run: docker compose -f docker-compose.yml logs --no-color web
+
+      - name: Stop stack
+        if: always()
+        run: docker compose -f docker-compose.yml down -v

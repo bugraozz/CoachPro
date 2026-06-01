@@ -1,0 +1,74 @@
+---
+import { getHomeTextOverrides } from '../lib/site-content';
+import PublicLayout from '../layouts/PublicLayout.astro';
+
+const textOverrides = await getHomeTextOverrides();
+
+const pageText = (key: string, fallback: string): string => {
+  const value = textOverrides[key];
+  if (typeof value !== 'string') {
+    return fallback;
+  }
+
+  const normalized = value.trim();
+  return normalized || fallback;
+};
+---
+
+<PublicLayout
+  title="CoachPro - Kullanim Sartlari"
+  description="CoachPro kullanim sartlari"
+  bodyClass="min-h-screen bg-bg-primary"
+>
+  <header class="border-b border-border-default bg-white/90 backdrop-blur-xl sticky top-0 z-40">
+    <div class="max-w-4xl mx-auto px-6 py-4 flex items-center justify-between">
+      <a href="/" class="font-bold text-xl text-text-primary">CoachPro</a>
+      <div class="flex items-center gap-4 text-sm">
+        <a href="/privacy" class="text-text-secondary hover:text-text-primary transition-colors">Gizlilik</a>
+        <a href="/auth/register" class="btn-primary">Ucretsiz Basla</a>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-4xl mx-auto px-6 py-14 space-y-8">
+    <section>
+      <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-red-50 border border-red-200 text-red-600 text-xs font-semibold mb-4">
+        KULLANIM SARTLARI
+      </div>
+      <h1 class="text-4xl font-bold text-text-primary mb-4">Kullanim Sartlari</h1>
+      <p class="text-text-secondary leading-relaxed">
+        CoachPro platformunu kullanan tum kullanicilar asagidaki kosullari kabul etmis sayilir.
+        Platformu kullanmaya devam etmeniz bu kosullarin onaylandigi anlamina gelir.
+      </p>
+    </section>
+
+    <section class="card space-y-4">
+      <h2 class="text-2xl font-semibold text-text-primary">Hesap ve Sorumluluk</h2>
+      <p class="text-text-secondary">Hesap guvenliginizden ve oturum bilgilerinizin korunmasindan kullanici sorumludur.</p>
+      <p class="text-text-secondary">Yanlis, aldatici veya hukuka aykiri iceriklerin platformda paylasilmasi yasaktir.</p>
+    </section>
+
+    <section class="card space-y-4">
+      <h2 class="text-2xl font-semibold text-text-primary">Hizmet Kapsami</h2>
+      <p class="text-text-secondary">CoachPro, kocluk sureclerini dijital olarak yonetmek icin araclar sunar; tibbi tavsiye hizmeti sunmaz.</p>
+      <p class="text-text-secondary">Odeme, abonelik ve paket kurallari ilgili plan detaylarina ve yasal duzenlemelere tabidir.</p>
+    </section>
+
+    <section class="card space-y-4">
+      <h2 class="text-2xl font-semibold text-text-primary">Degisiklik Hakki</h2>
+      <p class="text-text-secondary">Platform, hizmet icerigi ve kullanim sartlarini onceden bildirimle guncelleme hakkini sakli tutar.</p>
+      <p class="text-text-secondary">Onemli degisikliklerde kullanicilara uygulama ici duyuru veya e-posta ile bilgi verilebilir.</p>
+    </section>
+  </main>
+
+  <footer class="py-10 px-6 border-t border-border-default bg-white/80">
+    <div class="max-w-4xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4 text-sm text-text-secondary">
+      <span>{pageText('footer.copyright', '© 2024 CoachPro. Tum haklari saklidir.')}</span>
+      <div class="flex items-center gap-5">
+        <a href="/privacy" class="hover:text-text-primary transition-colors">{pageText('footer.link.privacy', 'Gizlilik')}</a>
+        <a href="/terms" class="hover:text-text-primary transition-colors">{pageText('footer.link.terms', 'Kullanim Sartlari')}</a>
+        <a href="/contact" class="hover:text-text-primary transition-colors">{pageText('footer.link.contact', 'Iletisim')}</a>
+      </div>
+    </div>
+  </footer>
+</PublicLayout>
