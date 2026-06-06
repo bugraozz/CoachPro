@@ -53,7 +53,7 @@ export default function CoachStudents() {
 
         {filteredStudents.length > 0 ? (
           filteredStudents.map((student) => (
-            <TouchableOpacity key={student.id} onPress={() => router.push(`/coach/student/${student.id}`)} className="bg-white rounded-2xl p-4 mb-4 shadow-sm border border-border-default flex-row items-center justify-between">
+            <TouchableOpacity key={student.id} onPress={() => router.push(`/(tabs)/coach/student/${student.id}`)} className="bg-white rounded-2xl p-4 mb-4 shadow-sm border border-border-default flex-row items-center justify-between">
               <View className="flex-row items-center">
                 <View className="w-12 h-12 rounded-full bg-accent-primary/10 items-center justify-center mr-4">
                   <Text className="text-accent-primary font-bold text-lg">{student.name.charAt(0)}</Text>

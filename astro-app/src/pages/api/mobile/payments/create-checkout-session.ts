@@ -17,7 +17,8 @@ export const POST: APIRoute = async ({ request }) => {
     delete forwardBody.paymentToken;
 
     const requestOrigin = new URL(request.url).origin;
-    const forwardedRequest = new Request(new URL('/api/payments/create-checkout-session', request.url), {
+    const internalUrl = new URL('/api/payments/create-checkout-session', 'http://127.0.0.1:4321');
+    const forwardedRequest = new Request(internalUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

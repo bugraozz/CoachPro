@@ -35,8 +35,20 @@ export default function CoachTabLayout() {
         }} 
       />
       <Tabs.Screen
-        name="notifications"
-        options={{ title: 'Bildirimler', tabBarLabel: 'Bildirimler', headerRight: () => null }}
+        name="add-student"
+        options={{ href: null }}
+      />
+      <Tabs.Screen
+        name="student/[studentId]"
+        options={{ href: null }}
+      />
+      <Tabs.Screen
+        name="student/create-diet"
+        options={{ href: null }}
+      />
+      <Tabs.Screen
+        name="student/create-program"
+        options={{ href: null }}
       />
     </Tabs>
   );

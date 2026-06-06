@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, ScrollView, Switch, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { router } from 'expo-router';
-import { api } from '../api/axios';
-import { useAuthStore } from '../stores/useAuthStore';
+import { api } from '../../api/axios';
+import { useAuthStore } from '../../stores/useAuthStore';
 
 export default function AdminScreen() {
   const { user } = useAuthStore();
@@ -186,10 +186,26 @@ export default function AdminScreen() {
           {(data?.pendingInvites || []).map((invite: any) => (
             <View key={invite.id} className="border border-border-default rounded-xl p-3 mb-2">
               <Text className="font-semibold text-text-primary">{invite.email}</Text>
-              <Text className="text-xs text-text-muted">{invite.role} • {new Date(invite.expiresAt).toLocaleString('tr-TR')}</Text>
+              <Text className="text-xs text-text-muted">{invite.role} • Bekliyor ({new Date(invite.expiresAt).toLocaleString('tr-TR')})</Text>
               <TouchableOpacity onPress={() => postAdmin({ action: 'revoke_admin_invite', inviteId: invite.id })} className="mt-2 self-start">
                 <Text className="text-accent-red font-semibold">İptal et</Text>
               </TouchableOpacity>
+            </View>
+          ))}
+          
+          {(data?.acceptedInvites || []).length > 0 && <Text className="text-sm font-bold text-text-primary mt-4 mb-2">Kabul Edilen Davetler</Text>}
+          {(data?.acceptedInvites || []).map((invite: any) => (
+            <View key={invite.id} className="border border-border-default rounded-xl p-3 mb-2 bg-gray-50">
+              <Text className="font-semibold text-text-primary">{invite.email}</Text>
+              <Text className="text-xs text-text-muted">{invite.role} • Kabul Edildi ({new Date(invite.acceptedAt).toLocaleString('tr-TR')})</Text>
+            </View>
+          ))}
+          
+          <Text className="text-sm font-bold text-text-primary mt-4 mb-2">Mevcut Yöneticiler</Text>
+          {(data?.backofficeUsers || []).map((userItem: any) => (
+            <View key={userItem.id} className="border border-border-default rounded-xl p-3 mb-2">
+              <Text className="font-semibold text-text-primary">{userItem.name} ({userItem.email})</Text>
+              <Text className="text-xs text-text-muted">{userItem.role} • {userItem.active ? 'Aktif' : 'Pasif'}</Text>
             </View>
           ))}
         </View>
@@ -217,10 +233,6 @@ export default function AdminScreen() {
           </TouchableOpacity>
           <Text className="text-xs text-text-muted mt-3">Hazır: {data?.platformPayoutReady ? 'Evet' : 'Hayır'}</Text>
         </View>
-
-        <TouchableOpacity onPress={() => router.replace('/(tabs)/coach')} className="w-full h-12 rounded-xl bg-white border border-border-default items-center justify-center mb-4">
-          <Text className="text-text-primary font-semibold">Coach paneline dön</Text>
-        </TouchableOpacity>
       </View>
     </ScrollView>
   );

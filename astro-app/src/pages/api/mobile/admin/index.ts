@@ -1,11 +1,13 @@
 import type { APIRoute } from 'astro';
-import prisma from '../../../lib/prisma';
-import { getUserFromMobileRequest } from './utils';
-import { isBackofficeUser, isSuperAdmin } from '../../../lib/auth';
-import { DEFAULT_MAINTENANCE_MESSAGE, getMaintenanceModeStatus, setMaintenanceModeStatus } from '../../../lib/system-settings';
-import { getCoachSubscriptionPlans, getCoachSubscriptionPlanDiscounts, getGlobalCoachSubscriptionDiscount, setCoachSubscriptionPlanPrices, setCoachSubscriptionPlanDiscounts, setGlobalCoachSubscriptionDiscount } from '../../../lib/pricing';
-import { createAdminInvite, getAdminInviteAppOrigin, getAdminInviteTtlHours, revokeAdminInvite } from '../../../lib/admin-invites';
-import { getPlatformPayoutProfile, isPlatformPayoutReady, setPlatformPayoutProfile } from '../../../lib/payment-settings';
+import prisma from '../../../../lib/prisma';
+import { getUserFromMobileRequest } from '../utils';
+import { isBackofficeUser, isSuperAdmin } from '../../../../lib/auth';
+import { DEFAULT_MAINTENANCE_MESSAGE, getMaintenanceModeStatus, setMaintenanceModeStatus } from '../../../../lib/system-settings';
+import { getCoachSubscriptionPlans, getCoachSubscriptionPlanDiscounts, getGlobalCoachSubscriptionDiscount, setCoachSubscriptionPlanPrices, setCoachSubscriptionPlanDiscounts, setGlobalCoachSubscriptionDiscount } from '../../../../lib/pricing';
+import { createAdminInvite, getAdminInviteAppOrigin, getAdminInviteTtlHours, revokeAdminInvite } from '../../../../lib/admin-invites';
+import { getPlatformPayoutProfile, isPlatformPayoutReady, setPlatformPayoutProfile } from '../../../../lib/payment-settings';
+import { normalizeIban, normalizeIdentityNumber, syncCoachSubMerchant, validateCoachPayoutInput } from '../../../../lib/iyzico-marketplace';
+import { retrieveSubMerchant } from '../../../../lib/iyzico';
 
 const prismaClient = prisma as any;
 
@@ -192,24 +194,136 @@ export const POST: APIRoute = async ({ request }) => {
         return response({ error: 'Bu işlemi sadece super admin yapabilir.' }, 403);
       }
 
+      const subMerchantType = body.subMerchantType === 'PRIVATE_COMPANY' ? 'PRIVATE_COMPANY' : 'PERSONAL';
+      const identityNumber = String(body.identityNumber || '').trim();
+      const iban = String(body.iban || '').trim();
+      const contactPhone = String(body.contactPhone || '').trim();
+      const address = String(body.address || '').trim();
+      const city = String(body.city || '').trim();
+      const zipCode = String(body.zipCode || '').trim();
+      const taxOffice = String(body.taxOffice || '').trim();
+      const legalCompanyTitle = String(body.legalCompanyTitle || '').trim();
+      const manualSubMerchantKey = String(body.subMerchantKey || '').trim();
+      const manualSubMerchantExternalId = String(body.subMerchantExternalId || '').trim();
+
+      const validationError = validateCoachPayoutInput({
+        subMerchantType,
+        identityNumber,
+        iban,
+        address,
+        city,
+        zipCode,
+        taxOffice: taxOffice || null,
+        legalCompanyTitle: legalCompanyTitle || null,
+      });
+
+      if (validationError) {
+        return response({ error: validationError }, 400);
+      }
+
+      if (manualSubMerchantKey && !manualSubMerchantExternalId) {
+        return response({ error: 'Manuel anahtar kullanımı için SubMerchantExternalId zorunludur.' }, 400);
+      }
+
+      const existingProfile = await getPlatformPayoutProfile();
+      const platformExternalId = existingProfile.subMerchantExternalId || `platform_${user.id}`;
+
+      let syncResult: {
+        ok: boolean;
+        error?: string;
+        subMerchantKey?: string;
+        subMerchantExternalId?: string;
+        subMerchantStatus?: string;
+      };
+
+      if (manualSubMerchantKey && manualSubMerchantExternalId) {
+        const retrieved = await retrieveSubMerchant({
+          locale: 'tr',
+          conversationId: `platform-manual-link-${user.id}`,
+          subMerchantExternalId: manualSubMerchantExternalId,
+        }).catch(() => null);
+
+        const retrievedStatus = String((retrieved as Record<string, unknown> | null)?.status || '').toLowerCase();
+        const retrievedSubMerchantKey = String((retrieved as Record<string, unknown> | null)?.subMerchantKey || '').trim();
+
+        if (!retrieved || retrievedStatus !== 'success') {
+          syncResult = { ok: false, error: String((retrieved as Record<string, unknown> | null)?.errorMessage || 'Alt üye işyeri bilgisi doğrulanamadı.') };
+        } else if (retrievedSubMerchantKey && retrievedSubMerchantKey !== manualSubMerchantKey) {
+          syncResult = { ok: false, error: 'Girilen SubMerchantKey, verilen external id ile eşleşmiyor.' };
+        } else {
+          syncResult = {
+            ok: true,
+            subMerchantKey: manualSubMerchantKey,
+            subMerchantExternalId: manualSubMerchantExternalId,
+            subMerchantStatus: String((retrieved as Record<string, unknown> | null)?.subMerchantStatus || 'active'),
+          };
+        }
+      } else {
+        syncResult = await syncCoachSubMerchant({
+          coachId: `platform-${user.id}`,
+          email: user.email,
+          phone: contactPhone || user.phone,
+          fullName: user.name || 'CoachPro Platform',
+          subMerchantType,
+          identityNumber,
+          iban,
+          address,
+          city,
+          zipCode,
+          taxOffice: taxOffice || null,
+          legalCompanyTitle: legalCompanyTitle || null,
+          existingSubMerchantKey: existingProfile.subMerchantKey || null,
+          existingExternalId: existingProfile.subMerchantExternalId || platformExternalId,
+        });
+      }
+
+      const parts = (user.name || 'CoachPro Platform').trim().split(/\s+/).filter(Boolean);
+      const firstName = parts[0] || 'CoachPro';
+      const lastName = parts.length > 1 ? parts.slice(1).join(' ') : 'Platform';
+      const nowIso = new Date().toISOString();
+      const resolvedExternalId = syncResult.subMerchantExternalId || existingProfile.subMerchantExternalId || manualSubMerchantExternalId || platformExternalId;
+
+      if (!syncResult.ok || !syncResult.subMerchantKey) {
+        const resolvedError = syncResult.error || 'Iyzico platform kaydı oluşturulamadı.';
+        const profile = await setPlatformPayoutProfile({
+          subMerchantType,
+          identityNumber: normalizeIdentityNumber(identityNumber),
+          iban: normalizeIban(iban),
+          address,
+          city,
+          zipCode,
+          taxOffice: taxOffice || null,
+          legalCompanyTitle: legalCompanyTitle || null,
+          contactPhone: contactPhone || user.phone || null,
+          contactName: firstName,
+          contactSurname: lastName,
+          subMerchantExternalId: resolvedExternalId,
+          lastSyncAt: nowIso,
+          lastError: resolvedError,
+          updatedBy: user.id,
+        });
+        await writeAdminAuditLog(user, request, action, { ok: false, error: resolvedError });
+        return response({ success: false, error: resolvedError, platformPayoutProfile: profile, platformPayoutReady: isPlatformPayoutReady(profile) }, 400);
+      }
+
       const profile = await setPlatformPayoutProfile({
-        subMerchantType: body.subMerchantType as string,
-        identityNumber: body.identityNumber as string,
-        iban: body.iban as string,
-        address: body.address as string,
-        city: body.city as string,
-        zipCode: body.zipCode as string,
-        taxOffice: body.taxOffice as string,
-        legalCompanyTitle: body.legalCompanyTitle as string,
-        contactPhone: body.contactPhone as string,
-        contactName: body.contactName as string,
-        contactSurname: body.contactSurname as string,
-        subMerchantKey: body.subMerchantKey as string,
-        subMerchantExternalId: body.subMerchantExternalId as string,
-        subMerchantStatus: body.subMerchantStatus as string,
-        payoutReadyAt: body.payoutReadyAt as string,
-        lastSyncAt: body.lastSyncAt as string,
-        lastError: body.lastError as string,
+        subMerchantType,
+        identityNumber: normalizeIdentityNumber(identityNumber),
+        iban: normalizeIban(iban),
+        address,
+        city,
+        zipCode,
+        taxOffice: taxOffice || null,
+        legalCompanyTitle: legalCompanyTitle || null,
+        contactPhone: contactPhone || user.phone || null,
+        contactName: firstName,
+        contactSurname: lastName,
+        subMerchantKey: syncResult.subMerchantKey,
+        subMerchantExternalId: resolvedExternalId,
+        subMerchantStatus: syncResult.subMerchantStatus || 'active',
+        payoutReadyAt: nowIso,
+        lastSyncAt: nowIso,
+        lastError: null,
         updatedBy: user.id,
       });
 

@@ -6,12 +6,17 @@ export const GET: APIRoute = async ({ request }) => {
   try {
     const user = await getUserFromMobileRequest(request);
 
-    if (!user || user.role !== 'coach') {
+    if (!user || (user.role !== 'coach' && user.role !== 'admin' && user.role !== 'super_admin')) {
       return new Response(JSON.stringify({ error: 'Yetkisiz' }), { status: 401, headers: { 'Content-Type': 'application/json' } });
     }
 
+    const whereClause: any = { role: 'student' };
+    if (user.role === 'coach') {
+      whereClause.coachId = user.id;
+    }
+
     const students = await prisma.user.findMany({
-      where: { coachId: user.id, role: 'student' },
+      where: whereClause,
       include: {
         selectedPackage: true,
         programs: { where: { status: 'active' }, select: { id: true } },
@@ -30,7 +35,7 @@ export const POST: APIRoute = async ({ request }) => {
   try {
     const user = await getUserFromMobileRequest(request);
 
-    if (!user || user.role !== 'coach') {
+    if (!user || (user.role !== 'coach' && user.role !== 'admin' && user.role !== 'super_admin')) {
       return new Response(JSON.stringify({ error: 'Yetkisiz' }), { status: 401, headers: { 'Content-Type': 'application/json' } });
     }
 

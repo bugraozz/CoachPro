@@ -28,11 +28,20 @@ export const GET: APIRoute = async ({ request }) => {
       return new Response(JSON.stringify({ messages }), { status: 200, headers: { 'Content-Type': 'application/json' } });
     } else {
       // Kişi listesi
-      if (user.role === 'coach') {
-        const students = await prisma.user.findMany({
-          where: { coachId: user.id, role: 'student' },
-          select: { id: true, name: true, photoUrl: true }
-        });
+      if (user.role === 'coach' || user.role === 'admin' || user.role === 'super_admin') {
+        let students: any[] = [];
+        if (user.role === 'coach') {
+          students = await prisma.user.findMany({
+            where: { coachId: user.id, role: 'student' },
+            select: { id: true, name: true, photoUrl: true }
+          });
+        } else {
+          // Admin can see all users as contacts for messaging
+          students = await prisma.user.findMany({
+            select: { id: true, name: true, photoUrl: true },
+            take: 100
+          });
+        }
         return new Response(JSON.stringify({ contacts: students }), { status: 200, headers: { 'Content-Type': 'application/json' } });
       } else {
         const coachInfo = await prisma.user.findFirst({

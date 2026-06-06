@@ -12,12 +12,16 @@ export const GET: APIRoute = async ({ request }) => {
       return new Response(JSON.stringify({ error: 'Yetkisiz' }), { status: 401, headers: { 'Content-Type': 'application/json' } });
     }
 
-    const isCoach = user.role === 'coach';
+    const isCoach = user.role === 'coach' || user.role === 'admin' || user.role === 'super_admin';
 
     if (isCoach) {
-      // Eğitmen için oluşturduğu tüm programları getir
+      const whereClause: any = {};
+      if (user.role === 'coach') {
+        whereClause.user = { coachId: user.id };
+      }
+      
       const programs = await prisma.program.findMany({
-        where: { user: { coachId: user.id } }, // Kendi öğrencilerinin programları
+        where: whereClause,
         include: {
           user: { select: { name: true, email: true } },
           days: { include: { exercises: true } }

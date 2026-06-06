@@ -182,10 +182,10 @@ export default function CoachStudentDetail() {
         <View className="bg-white rounded-2xl p-5 mb-6 shadow-sm border border-border-default">
           <Text className="text-lg font-bold text-text-primary mb-2">Öğrenci Yönetimi</Text>
           <Text className="text-sm text-text-muted mb-4">Bu öğrenci için yeni antrenman veya beslenme planı oluşturun.</Text>
-          <TouchableOpacity onPress={() => router.push(`/coach/student/create-program?studentId=${studentId}`)} className="w-full h-12 rounded-lg bg-accent-green items-center justify-center mb-3">
+          <TouchableOpacity onPress={() => router.push(`/(tabs)/coach/student/create-program?studentId=${studentId}`)} className="w-full h-12 rounded-lg bg-accent-green items-center justify-center mb-3">
             <Text className="text-white font-semibold">Antrenman Programı Ekle</Text>
           </TouchableOpacity>
-          <TouchableOpacity onPress={() => router.push(`/coach/student/create-diet?studentId=${studentId}`)} className="w-full h-12 rounded-lg bg-accent-orange items-center justify-center">
+          <TouchableOpacity onPress={() => router.push(`/(tabs)/coach/student/create-diet?studentId=${studentId}`)} className="w-full h-12 rounded-lg bg-accent-orange items-center justify-center">
             <Text className="text-white font-semibold">Diyet Planı Ekle</Text>
           </TouchableOpacity>
         </View>

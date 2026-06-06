@@ -12,11 +12,16 @@ export const GET: APIRoute = async ({ request }) => {
       return new Response(JSON.stringify({ error: 'Yetkisiz' }), { status: 401, headers: { 'Content-Type': 'application/json' } });
     }
 
-    const isCoach = user.role === 'coach';
+    const isCoach = user.role === 'coach' || user.role === 'admin' || user.role === 'super_admin';
 
     if (isCoach) {
+      const whereClause: any = {};
+      if (user.role === 'coach') {
+        whereClause.user = { coachId: user.id };
+      }
+
       const dietPlans = await prisma.dietPlan.findMany({
-        where: { user: { coachId: user.id } },
+        where: whereClause,
         include: {
           user: { select: { name: true } },
           meals: { include: { foods: true } }

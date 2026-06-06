@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, Alert, ActivityIndicator } from 'react-native';
 import { router } from 'expo-router';
-import { AUTH_ORIGIN } from '../../api/axios';
+import { api } from '../../api/axios';
 import { useAuthStore } from '../../stores/useAuthStore';
 
 export default function LoginScreen() {
@@ -18,17 +18,10 @@ export default function LoginScreen() {
 
     try {
       setLoading(true);
-      const res = await fetch(`${AUTH_ORIGIN}/api/auth/login`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ email, password }),
-      });
-
-      const data = await res.json();
+      const res = await api.post('/auth/login', { email, password });
+      const data = res.data;
       
-      if (res.ok && data?.token) {
+      if (data?.token) {
         await login(data.user, data.token);
         if (data.user.role === 'admin' || data.user.role === 'super_admin') {
           router.replace('/admin');
@@ -37,34 +30,24 @@ export default function LoginScreen() {
         } else {
           router.replace('/(tabs)/student');
         }
-      } else if (data?.requiresPayment && data?.paymentAccessToken && data?.user?.id) {
-        router.replace({
-          pathname: '/(auth)/payment',
-          params: {
-            userId: data.user.id,
-            paymentToken: data.paymentAccessToken,
-            role: data.user.role,
-          },
-        });
       } else {
         Alert.alert('Hata', data?.error || 'Giriş yapılırken bir hata oluştu.');
       }
     } catch (error: any) {
-      const pendingUser = error?.response?.data?.user;
-      const paymentAccessToken = error?.response?.data?.paymentAccessToken;
-      if (error?.response?.data?.requiresPayment && pendingUser?.id && paymentAccessToken) {
+      const resData = error?.response?.data;
+      if (resData?.requiresPayment && resData?.user?.id && resData?.paymentAccessToken) {
         router.replace({
           pathname: '/(auth)/payment',
           params: {
-            userId: pendingUser.id,
-            paymentToken: paymentAccessToken,
-            role: pendingUser.role,
+            userId: resData.user.id,
+            paymentToken: resData.paymentAccessToken,
+            role: resData.user.role,
           },
         });
         return;
       }
 
-      const msg = error?.response?.data?.error || 'Giriş yapılırken bir hata oluştu.';
+      const msg = resData?.error || 'Giriş yapılırken bir hata oluştu.';
       Alert.alert('Hata', msg);
     } finally {
       setLoading(false);

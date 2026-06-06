@@ -19,7 +19,7 @@ export default function ChatScreen() {
 
   const fetchMessages = async () => {
     try {
-      const res = await api.get(`/messages/${otherUserId}`);
+      const res = await api.get(`/messages?contactId=${otherUserId}`);
       setMessages(res.data.messages || []);
     } catch (error) {
       console.error(error);
@@ -34,7 +34,7 @@ export default function ChatScreen() {
 
     try {
       setSending(true);
-      await api.post(`/messages/${otherUserId}`, { content: trimmed });
+      await api.post(`/messages`, { receiverId: otherUserId, content: trimmed });
       setContent('');
       await fetchMessages();
     } catch (error: any) {

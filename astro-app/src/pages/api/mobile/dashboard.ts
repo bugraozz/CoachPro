@@ -10,7 +10,7 @@ export const GET: APIRoute = async ({ request }) => {
       return new Response(JSON.stringify({ error: 'Yetkisiz' }), { status: 401, headers: { 'Content-Type': 'application/json' } });
     }
 
-    const isCoach = user.role === 'coach';
+    const isCoach = user.role === 'coach' || user.role === 'admin' || user.role === 'super_admin';
     
     if (isCoach) {
       const students = await prisma.user.findMany({

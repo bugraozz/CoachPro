@@ -6,6 +6,7 @@
 		"dev:web": "npm --prefix astro-app run dev -- --host 0.0.0.0",
 		"dev:mobile": "npm --prefix coach-mobile run start -- --clear --port 8082",
 		"dev:all": "node scripts/dev-all.mjs",
+		"dev:docker": "node scripts/dev-docker.mjs",
 		"dev:host": "npm --prefix astro-app run dev -- --host",
 		"build": "npm --prefix astro-app run build",
 		"preview": "npm --prefix astro-app run preview",

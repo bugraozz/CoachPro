@@ -84,7 +84,7 @@ export default function CoachDashboard() {
             recentStudents.map((student: any) => (
               <TouchableOpacity
                 key={student.id}
-                onPress={() => router.push(`/coach/student/${student.id}`)}
+                onPress={() => router.push(`/(tabs)/coach/student/${student.id}`)}
                 className="flex-row items-center justify-between py-3 border-b border-border-default last:border-0"
               >
                 <View className="flex-row items-center">

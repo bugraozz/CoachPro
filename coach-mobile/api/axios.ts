@@ -16,6 +16,7 @@ export const api = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
+  timeout: 15000,
 });
 
 api.interceptors.request.use(
@@ -24,6 +25,7 @@ api.interceptors.request.use(
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
+    console.log(`[API] ${config.method?.toUpperCase()} ${config.baseURL}${config.url}`);
     return config;
   },
   (error) => {
@@ -34,7 +36,22 @@ api.interceptors.request.use(
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
-    if (error?.response?.status === 401) {
+    const url = error?.config?.url || '';
+    const isAuthRoute = url.includes('/auth/');
+    const status = error?.response?.status;
+    
+    // Network error durumunda logout yapma - sunucu kapalı olabilir
+    if (!error?.response) {
+      console.error(`[API] Network Error: ${url} - sunucuya ulaşılamıyor`);
+      return Promise.reject(error);
+    }
+    
+    console.error(`[API] ${status} ${url}`, error?.response?.data);
+    
+    // Sadece auth dışı endpoint'lerde 401 alınırsa logout yap
+    // Ama admin endpoint'lerinde 401 almak session'ın geçersiz olduğu anlamına gelmez,
+    // sadece yetki eksikliği olabilir
+    if (status === 401 && !isAuthRoute && !url.includes('/admin')) {
       await useAuthStore.getState().logout();
     }
 

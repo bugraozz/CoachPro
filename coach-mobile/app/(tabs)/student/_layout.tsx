@@ -46,10 +46,7 @@ export default function StudentTabLayout() {
           title: 'Profil',
         }} 
       />
-      <Tabs.Screen
-        name="notifications"
-        options={{ title: 'Bildirimler', tabBarLabel: 'Bildirimler', headerRight: () => null }}
-      />
+
     </Tabs>
   );
 }
