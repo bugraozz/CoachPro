@@ -35,15 +35,12 @@ export default function LoginScreen() {
       }
     } catch (error: any) {
       const resData = error?.response?.data;
-      if (resData?.requiresPayment && resData?.user?.id && resData?.paymentAccessToken) {
-        router.replace({
-          pathname: '/(auth)/payment',
-          params: {
-            userId: resData.user.id,
-            paymentToken: resData.paymentAccessToken,
-            role: resData.user.role,
-          },
-        });
+      if (resData?.requiresPayment) {
+        Alert.alert(
+          'Ödeme Gerekli',
+          'Hesabınız henüz aktif değil. Lütfen web sitemizden kayıt olup ödemenizi tamamlayın.',
+          [{ text: 'Tamam' }]
+        );
         return;
       }
 
@@ -108,11 +105,10 @@ export default function LoginScreen() {
           </TouchableOpacity>
         </View>
 
-        <View className="flex-row justify-center mt-2">
-          <Text className="text-text-secondary text-sm">Hesabınız yok mu? </Text>
-          <TouchableOpacity onPress={() => router.push('/(auth)/register')}>
-            <Text className="text-accent-primary text-sm font-semibold">Kayıt Ol</Text>
-          </TouchableOpacity>
+        <View className="items-center mt-2">
+          <Text className="text-text-secondary text-sm text-center">
+            Hesabınız yok mu? Web sitemizden kayıt olabilirsiniz.
+          </Text>
         </View>
 
         <TouchableOpacity onPress={() => router.push('/(auth)/forgot-password')} className="mt-4 items-center">
